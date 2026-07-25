@@ -703,6 +703,7 @@ class LinuxPackageManagerApp(App):
                 )
 
             # 🔄 處理系統與套件更新
+            # 🔄 處理系統與套件更新
             elif action == "update_system":
                 from morefunction import UpdateChoiceModal, PackageUpdateModal
 
@@ -715,19 +716,49 @@ class LinuxPackageManagerApp(App):
                 def handle_update_choice(choice: str | None) -> None:
                     if not choice: return
                     
-                    # 💻 模式一：全系統大升級與垃圾回收
+                    # 💻 模式一：全系統大升級與垃圾回收 (升級後互動式詢問 autoremove)
                     if choice == "system_update":
                         cmd = []
-                        if self.sys_status.get("apt"): cmd.append("sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y")
-                        if self.sys_status.get("snap"): cmd.append("sudo snap refresh")
-                        if self.sys_status.get("flatpak"): cmd.append("flatpak update -y")
-                        if self.sys_status.get("pacman"): cmd.append("sudo pacman -Syu --noconfirm")
+                        clean_cmds = []
                         
-                        final_cmd = " && ".join(cmd) if cmd else "echo '找不到支援的更新指令'"
-                        # ✨ 透過共用引擎發射
+                        # 1. 基礎升級指令 (將原本硬 coding 綁死的 autoremove 抽離為選用)
+                        if self.sys_status.get("apt"):
+                            cmd.append("sudo apt update && sudo apt upgrade -y")
+                            clean_cmds.append("sudo apt autoremove -y && sudo apt autoclean")
+                        if self.sys_status.get("snap"):
+                            cmd.append("sudo snap refresh")
+                        if self.sys_status.get("flatpak"):
+                            cmd.append("flatpak update -y")
+                            clean_cmds.append("flatpak uninstall --unused -y")
+                        if self.sys_status.get("pacman"):
+                            cmd.append("sudo pacman -Syu --noconfirm")
+                            clean_cmds.append("sudo pacman -Rns $(pacman -Qtdq) 2>/dev/null || echo '✨ 沒有發現孤立的相依套件'")
+                        if self.sys_status.get("dnf"):
+                            cmd.append("sudo dnf upgrade -y")
+                            clean_cmds.append("sudo dnf autoremove -y")
+                        if self.sys_status.get("zypper"):
+                            cmd.append("sudo zypper update -y")
+
+                        base_update = " && ".join(cmd) if cmd else "echo '找不到支援的更新指令'"
+                        
+                        # 2. 組合互動式 Bash 詢問語法
+                        if clean_cmds:
+                            combined_clean = " && ".join(clean_cmds)
+                            ask_clean_script = (
+                                f"; echo ''; "
+                                f"read -p '🗑️ 系統升級完成！是否要順便掃描並清除不需要的孤立套件 (autoremove)? [y/N]: ' do_clean; "
+                                f"if [[ \"$do_clean\" =~ ^[Yy]$ ]]; then "
+                                f"echo '🚀 正在清理系統垃圾...'; {combined_clean}; "
+                                f"else echo '💡 已跳過清理步驟。'; fi"
+                            )
+                            final_cmd = base_update + ask_clean_script
+                        else:
+                            final_cmd = base_update
+
+                        # ✨ 透過共用引擎發射 (結束後自動觸發 TUI 背景重整與關閉提示)
                         execute_update_cmd(final_cmd)
 
-                    # 📦 模式二：選擇個別套件更新
+                    # 📦 模式二：選擇個別套件更新 (就是這裡剛剛被不小心吃掉了！)
                     elif choice == "package_update":
                         table = self.query_one("#installed-packages-table")
                         package_data = []
@@ -751,7 +782,6 @@ class LinuxPackageManagerApp(App):
                                 elif mgr == "yay": cmd.append(f"yay -S --needed --noconfirm {pkgs_str}")
                             
                             final_cmd = " && ".join(cmd) if cmd else "echo '無更新指令'"
-                            # ✨ 透過共用引擎發射
                             execute_update_cmd(final_cmd)
 
                         self.push_screen(PackageUpdateModal(package_data), handle_package_update)
