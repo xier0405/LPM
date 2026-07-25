@@ -76,7 +76,7 @@ from textual.app import App, ComposeResult
 from textual.widgets.option_list import Option
 from textual.containers import Horizontal, Vertical
 from morefunction import EscMenuScreen, PackageTable
-from textual.widgets import Header, Footer, Input, Markdown, Label, DataTable, OptionList, Button , RichLog, TextArea, Checkbox, Select, DataTable
+from textual.widgets import Header, Footer, Input, Markdown, Label, DataTable, OptionList, Button, RichLog, TextArea, Checkbox, Select, TabPane, TabbedContent
 
 # ================= 1. Gemini AI 模組 =================
 class GeminiExplainer:
@@ -146,6 +146,12 @@ class LinuxPackageManagerApp(App):
     /* 🎯 沒安裝的套件管理員專屬樣式 */
     .uninstalled-label { color: #565f89; text-style: italic; }
     .uninstalled-label:hover { color: #7dcfff; text-style: bold underline; }
+
+    /* 🎯 分頁導航列與 Git 專案表樣式 */
+    TabbedContent { height: 1fr; }
+    ContentSwitcher { height: 1fr; }
+    TabPane { padding: 0; height: 1fr; }
+    #git-projects-table { height: 1fr; border: solid #292e42; }
     """
 
     def __init__(self) -> None:
@@ -356,24 +362,34 @@ class LinuxPackageManagerApp(App):
                 yield Input(placeholder="在此輸入套件名稱", id="pkg-input")
                 yield Markdown("等待輸入中...", id="ai-output")
                 
-        # 📦 下半部：套件表格 (⚠️ 請確保這個區塊只有一個！)
+        # 📦 下半部：套件表格 (⚠️ 請確保這個區塊只有一個！)     
         with Vertical(classes="bottom-pane", id="bottom-pane"):
-            yield Label("套件列表", classes="section-title")
-            
-            # ✨ 這是我們剛剛換上的客製化表格
-            yield PackageTable(id="installed-packages-table")
+            with TabbedContent(id="bottom-tabs"):
+                # 🏷️ 分頁 1：原本的系統套件
+                with TabPane("📦 系統套件列表", id="tab-packages"):
+                    yield PackageTable(id="installed-packages-table")
+                
+                # 🏷️ 分頁 2：全新加入的 Git 專案庫
+                with TabPane("🌿 Git 專案管理庫", id="tab-git"):
+                    yield DataTable(id="git-projects-table")
             
         yield Footer()    
 
     def on_mount(self) -> None:
+        # 1. 初始化系統套件表格
         table = self.query_one("#installed-packages-table", DataTable)
-        
-        # 🎯 只保留合法的選取模式設定
         table.click_to_select = True
         table.cursor_type = "row"
         
+        # 2. 初始化 Git 專案表格
+        git_table = self.query_one("#git-projects-table", DataTable)
+        git_table.click_to_select = True
+        git_table.cursor_type = "row"
+        
+        # 3. 雙線並行啟動非同步掃描任務
         import asyncio
         asyncio.create_task(self.load_installed_packages())
+        asyncio.create_task(self.load_git_projects())  
 
     # 鼠标隐形点击术事件接收器
     # 鼠标隐形点击术事件接收器
@@ -597,18 +613,24 @@ class LinuxPackageManagerApp(App):
         # ⏳ 防抖核心 2：定義一個新的延遲查詢任務
         async def delayed_search():
             import asyncio
-            await asyncio.sleep(0.3) # 停頓 0.3 秒，確認手指離開鍵盤了才動作
+            await asyncio.sleep(0.3)
             
             self.notify(f"🔍 自動觸發搜尋: {search_text}")
             
-            # 更新右邊的 AI 面板狀態
             try:
                 ai_panel = self.query_one("#ai-output")
                 ai_panel.update(f"⏳ 正在幫您過濾 '{search_text}' 的資訊...")
-            except Exception: 
-                pass
+            except Exception: pass
                 
-            self.refresh_table_view(search_text)
+            # ✨ 智能連動：偵測目前正在看哪一個分頁，就去過濾對應的表格！
+            try:
+                active_tab = self.query_one("#bottom-tabs", TabbedContent).active
+                if active_tab == "tab-git":
+                    self.refresh_git_table_view(search_text)
+                else:
+                    self.refresh_table_view(search_text)
+            except Exception:
+                self.refresh_table_view(search_text)
 
         # 🚀 防抖核心 3：發射剛剛寫好的延遲任務
         import asyncio
@@ -1163,6 +1185,137 @@ class LinuxPackageManagerApp(App):
             cmd_list.append(self.sys_info.build_command(mgr=mgr, action="uninstall", pkgs=pkgs))
             
         return " && ".join(cmd_list)
+
+    async def scan_git_repos(self) -> list:
+        """🔍 異步智能掃描常用目錄下的 Git 專案庫"""
+        import os
+        import asyncio
+        
+        # 預設掃描的開發根目錄清單 (大小寫全包防呆版)
+        home = os.path.expanduser("~")
+        scan_roots = [
+            os.path.join(home, "My_Project"),  # 🎯 你的主力目錄
+            os.path.join(home, "git"),         # ✨ 加上你目前用的小寫 git 目錄！
+            os.path.join(home, "Git"),         # 保留大寫防呆
+            os.path.join(home, "Projects"),
+            os.path.join(home, "workspace"),
+            os.path.join(home, "code"),
+            home  # 備用：掃描家目錄
+        ]
+        
+        found_repos = []
+        seen_paths = set()
+        
+        def do_scan():
+            for root_dir in scan_roots:
+                if not os.path.exists(root_dir):
+                    continue
+                # 限制掃描深度，避免陷入 node_modules 或深度巢狀目錄卡死
+                max_depth = 2 if root_dir == home else 3
+                for root, dirs, files in os.walk(root_dir):
+                    depth = root[len(str(root_dir)):].count(os.sep)
+                    if depth >= max_depth:
+                        dirs.clear()
+                        continue
+                    
+                    # 🚀 忽略不相關的厚重資料夾
+                    dirs[:] = [d for d in dirs if d not in [".venv", "venv", "node_modules", "__pycache__", ".cache", ".local", ".config", "build", "dist"]]
+                    
+                    if ".git" in dirs:
+                        if root in seen_paths:
+                            continue
+                        seen_paths.add(root)
+                        
+                        # 取得 Git 分支名稱
+                        branch = "unknown"
+                        status = "✔ 乾淨 (Clean)"
+                        try:
+                            b_res = subprocess.check_output(["git", "branch", "--show-current"], cwd=root, stderr=subprocess.DEVNULL).decode().strip()
+                            if b_res: branch = b_res
+                            
+                            # 檢查是否有未提交的修改
+                            s_res = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, stderr=subprocess.DEVNULL).decode().strip()
+                            if s_res: status = "📝 有修改 (Dirty)"
+                        except Exception:
+                            pass
+                            
+                        # 取得最後 Commit 時間
+                        last_commit = "N/A"
+                        try:
+                            c_res = subprocess.check_output(["git", "log", "-1", "--format=%cd (%cr)", "--date=short"], cwd=root, stderr=subprocess.DEVNULL).decode().strip()
+                            if c_res: last_commit = c_res
+                        except Exception:
+                            pass
+                            
+                        found_repos.append({
+                            "name": os.path.basename(root),
+                            "branch": branch,
+                            "status": status,
+                            "last_commit": last_commit,
+                            "path": root
+                        })
+                        # 已經是 Git 根目錄，不需再往子目錄尋找
+                        dirs.remove(".git")
+            return found_repos
+
+        def action_refresh_current_tab(self) -> None:
+            """🔄 智能判定當前分頁，並重新掃描資料"""
+        try:
+            active_tab = self.query_one("#bottom-tabs", TabbedContent).active
+            if active_tab == "tab-git":
+                self.notify("🔄 正在重新掃描硬碟中的 Git 專案庫...")
+                import asyncio
+                asyncio.create_task(self.load_git_projects())
+            else:
+                self.notify("🔄 正在重新同步系統套件...")
+                import asyncio
+                asyncio.create_task(self.load_installed_packages())
+        except Exception as e:
+            self.notify(f"❌ 重整失敗: {str(e)}", severity="error")
+            
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, do_scan)
+
+    async def load_git_projects(self) -> None:
+        """載入並刷新 Git 專案庫"""
+        try:
+            git_table = self.query_one("#git-projects-table", DataTable)
+            git_table.clear()
+        except Exception: pass
+        
+        self.raw_git_repos = await self.scan_git_repos()
+        self.refresh_git_table_view()
+
+    def refresh_git_table_view(self, search_text: str = "") -> None:
+        """畫出 Git 專案表格"""
+        try:
+            table = self.query_one("#git-projects-table", DataTable)
+        except Exception:
+            return
+            
+        table.clear(columns=True)
+        table.add_column("[bold #7aa2f7]專案名稱[/]", width=20)
+        table.add_column("[bold #9ece6a]當前分支[/]", width=18)
+        table.add_column("[bold #e0af68]工作區狀態[/]", width=18)
+        table.add_column("[bold #7aa2f7]最後提交紀錄[/]", width=26)
+        table.add_column("[bold #565f89]本地磁碟路徑[/]", width=35)
+        
+        search_lower = search_text.lower()
+        repos = getattr(self, "raw_git_repos", [])
+        
+        for repo in repos:
+            # 支援以名稱或路徑搜尋
+            if search_lower and search_lower not in repo["name"].lower() and search_lower not in repo["path"].lower():
+                continue
+            
+            status_color = "#9ece6a" if "乾淨" in repo["status"] else "#f7768e"
+            table.add_row(
+                f"[bold #bb9af3]{repo['name']}[/]",
+                f"[bold #7dcfff]⑂ {repo['branch']}[/]",
+                f"[{status_color}]{repo['status']}[/]",
+                repo["last_commit"],
+                f"[i #565f89]{repo['path']}[/]"
+            )
 
 if __name__ == "__main__":
     app = LinuxPackageManagerApp()
