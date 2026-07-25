@@ -270,13 +270,37 @@ class LinuxPackageManagerApp(App):
                     )
                 return
 
-    # 🔑 【Enter 鍵：執行刪除（單一或批次自動分流）】
+    # 🔑 【Enter 鍵：執行刪除 或 開啟 Git 專案檔案總管】
         if event.key == "enter":
             if isinstance(self.screen, ModalScreen):
                 return
             if self.focused and getattr(self.focused, "id", None) == "pkg-input":
                 return
 
+            # 🌿 分流 0：如果目前正在【Git 專案管理庫】分頁，Enter 就是「開啟檔案總管」！
+            try:
+                active_tab = self.query_one("#bottom-tabs", TabbedContent).active
+                if active_tab == "tab-git":
+                    git_table = self.query_one("#git-projects-table", DataTable)
+                    if git_table.cursor_coordinate:
+                        row_key, _ = git_table.coordinate_to_cell_key(git_table.cursor_coordinate)
+                        row_data = git_table.get_row(row_key)
+                        
+                        # 萃取第 4 欄 (index 4) 的本地磁碟路徑，並清除文字格式語法
+                        import re
+                        raw_path = re.sub(r'\[.*?\]', '', str(row_data[4])).strip()
+                        
+                        if os.path.exists(raw_path):
+                            self.notify(f"📂 正在為您開啟檔案總管：{raw_path}")
+                            # 🚀 用 xdg-open 在背景靜默開啟預設的檔案總管 (如 Dolphin/Nautilus)，不阻塞 TUI！
+                            subprocess.Popen(["xdg-open", raw_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        else:
+                            self.notify(f"❌ 找不到該本地目錄：{raw_path}", severity="error")
+                    return
+            except Exception:
+                pass  # 如果抓取分頁失敗，安靜往下滑落到原本的套件刪除邏輯
+
+            # 📦 下面維持你原本完美的【系統套件】單一或批次卸載邏輯！
             try:
                 table = self.query_one("#installed-packages-table", __import__("textual").widgets.DataTable)
                 
