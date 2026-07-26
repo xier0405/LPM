@@ -139,6 +139,10 @@ class LinuxPackageManagerApp(App):
     .section-title { color: #bb9af3; text-style: bold; margin-bottom: 1; }
     #pkg-input { margin-bottom: 1; }
     DataTable { height: 1fr; border: solid #292e42; }
+    # ✨ 在 CSS 最下方新增這行：強制盒子高度自適應，解決中間空大洞的問題！
+    #os-info-box, #git-info-box { 
+        height: auto; 
+    }
     
     /* 🎯 讓純文字標籤在滑鼠移上去時有手勢提示，並增加點擊回饋感 */
     .status-label:hover { color: #bb9af3; text-style: underline; }
@@ -360,24 +364,28 @@ class LinuxPackageManagerApp(App):
         # 📦 上半部：左右兩欄並排的水平容器
         with Horizontal(classes="top-box", id="top-box"):
             
-            # ⬅️ 左欄：系統狀態與硬碟資訊
+            # ⬅️ 左欄：系統狀態與硬碟資訊 (✨ 雙盒動態切換版！)
             with Vertical(classes="left-pane", id="left-pane"):
-                yield Label(f"  發行版：[bold #9ece6a]{self.sys_info.get_os_name()}[/]", classes="status-label")
+                # 🌿 盒子 A：Git 專案雷達專用 (預設先隱藏)
+                git_lbl = Label("", id="git-info-box")
+                git_lbl.display = False
+                yield git_lbl
                 
-                for mgr, avail in self.sys_status.items():
-                    if avail:
-                        # 已經安裝的，正常顯示並等待計算數量
-                        lbl = Label(f"   - {mgr} (計算中...)", id=f"lbl-{mgr}", classes="status-label")
-                        lbl.styles.interactive = True  # 🔮 強制開啟滑鼠互動靈魂！
-                        yield lbl
-                    else:
-                        # ✨ 如果沒安裝，且是通用型沙盒工具，就顯示一鍵安裝按鈕！
-                        if mgr in ["snap", "flatpak"]:
-                            lbl = Label(f"   - {mgr} (🚀 等你來按我就裝)", id=f"install-{mgr}", classes="status-label uninstalled-label")
+                # 📦 盒子 B：系統套件與互動點擊專用 (保留你原本完美的點擊靈魂！)
+                with Vertical(id="os-info-box"):
+                    yield Label(f"  發行版：[bold #9ece6a]{self.sys_info.get_os_name()}[/]", classes="status-label")
+                    for mgr, avail in self.sys_status.items():
+                        if avail:
+                            lbl = Label(f"   - {mgr} (計算中...)", id=f"lbl-{mgr}", classes="status-label")
                             lbl.styles.interactive = True  # 🔮 強制開啟滑鼠互動靈魂！
                             yield lbl
+                        else:
+                            if mgr in ["snap", "flatpak"]:
+                                lbl = Label(f"   - {mgr} (🚀 等你來按我就裝)", id=f"install-{mgr}", classes="status-label uninstalled-label")
+                                lbl.styles.interactive = True  # 🔮 強制開啟滑鼠互動靈魂！
+                                yield lbl
                 
-                # 硬碟資訊放在迴圈結束後的底部
+                # 硬碟資訊留在底部常駐顯示
                 yield Label(self.sys_info.get_disk_info(), classes="disk-label")
             
             # ➡️ 右欄：Gemini AI 查詢面板
@@ -481,23 +489,17 @@ class LinuxPackageManagerApp(App):
             table.clear()
         except Exception: pass
         
-        # ✨ 關鍵：一行指令向大腦索取清單！
+        # ✨ 向大腦索取所有安裝套件清單！
         self.raw_packages = await self.sys_info.scan_all_packages()
-
-        # 🎯 更新左側的標籤文字與數量
-        for mgr, avail in self.sys_status.items():
-            if avail:
-                mgr_count = sum(1 for p in self.raw_packages if p.get("manager") == mgr)
-                try:
-                    lbl = self.query_one(f"#lbl-{mgr}")
-                    lbl.update(f"   - {mgr} [bold #e0af68]({mgr_count})[/]")
-                except Exception: pass
 
         try:
             current_keyword = self.query_one("#pkg-input").value
             self.refresh_table_view(search_text=current_keyword, sort_by=getattr(self, "current_sort", "name"))
         except Exception:
             self.refresh_table_view()
+
+        # ✨ 關鍵：掃描完 APT / Snap 套件後，立刻通知左上角新盒子更新數字！
+        self.update_left_info_panel()
 
     def refresh_table_view(self, search_text: str = "", sort_by: str = "size") -> None:
         try:
@@ -1308,7 +1310,17 @@ class LinuxPackageManagerApp(App):
         except Exception: pass
         
         self.raw_git_repos = await self.scan_git_repos()
+
+    # 建立一個字典來計算每個目錄下的專案數量
+        self.git_dir_counts = {}
+        for repo in self.raw_git_repos:
+            # 從路徑 (例如 /home/xier/git/mahiro_pet) 抓出上一層資料夾名稱 "git"
+            parent_dir = os.path.basename(os.path.dirname(repo["path"]))
+            self.git_dir_counts[parent_dir] = self.git_dir_counts.get(parent_dir, 0) + 1
+
+        # 3. 更新下方表格與左上角文字框
         self.refresh_git_table_view()
+        self.update_left_info_panel()
 
     def refresh_git_table_view(self, search_text: str = "") -> None:
         """畫出 Git 專案表格"""
@@ -1340,6 +1352,54 @@ class LinuxPackageManagerApp(App):
                 repo["last_commit"],
                 f"[i #565f89]{repo['path']}[/]"
             )
+    # 🚀 掃描完成後，立刻刷新左上角面板！
+        self.update_left_info_panel()
+
+    def update_left_info_panel(self) -> None:
+        """📊 根據當前啟動的分頁，切換左欄顯示 Git 雷達或互動式套件標籤"""
+        try:
+            active_tab = self.query_one("#bottom-tabs", TabbedContent).active
+            git_box = self.query_one("#git-info-box", Label)
+            os_box = self.query_one("#os-info-box", Vertical)
+            
+            if active_tab == "tab-git":
+                # 🌿 切換到 Git 分頁：隱藏套件標籤，顯示 Git 雷達！
+                os_box.display = False
+                git_box.display = True
+                
+                total_repos = sum(getattr(self, "git_dir_counts", {}).values())
+                lines = [
+                    f"[bold green]🌿 Git 專案庫雷達[/] [dim](共 {total_repos} 個)[/]",
+                    ""
+                ]
+                for folder, count in getattr(self, "git_dir_counts", {}).items():
+                    lines.append(f" - [bold cyan]{folder}[/]: [yellow]{count}[/] 個專案")
+                
+                if not getattr(self, "git_dir_counts", {}):
+                    lines.append(" - [dim]尚未掃描到任何 Git 專案[/]")
+                    
+                git_box.update("\n".join(lines))
+                
+            else:
+                # 📦 切換到套件分頁：隱藏 Git 雷達，顯示互動式套件標籤！
+                git_box.display = False
+                os_box.display = True
+                
+                # ✨ 關鍵補刀：針對每一個已安裝的管理員，計算真實套件數量並更新對應的標籤！
+                for mgr, avail in self.sys_status.items():
+                    if avail:
+                        mgr_count = sum(1 for p in getattr(self, "raw_packages", []) if p.get("manager") == mgr)
+                        try:
+                            lbl = self.query_one(f"#lbl-{mgr}")
+                            lbl.update(f"   - {mgr} [bold #e0af68]({mgr_count})[/]")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """🔄 當使用者切換下方分頁時，瞬間變身左上角面板！"""
+        self.update_left_info_panel()
 
 if __name__ == "__main__":
     app = LinuxPackageManagerApp()
