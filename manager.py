@@ -120,7 +120,7 @@ class LinuxPackageManagerApp(App):
         
         # ✨ 終極殺招：用 Binding 物件並加上 priority=True，強勢覆蓋 DataTable 的隱藏設定！
         ("enter", "do_nothing", "確認刪除"),
-
+        ("ctrl+t", "toggle_tab", "切換分頁"),
         ("z", "z_action", "批量安裝/卸載"),      
         ("ctrl+left", "resize_left_pane(-2)", "縮小左欄"),
         ("ctrl+right", "resize_left_pane(2)", "放大左欄"),
@@ -357,6 +357,23 @@ class LinuxPackageManagerApp(App):
             except Exception as e:
                 self.notify(f"❌ 處理 Enter 事件失敗: {str(e)}", severity="error")
                 return
+
+    def action_toggle_tab(self) -> None:
+        """🔄 鍵盤盲操：在「系統套件」與「Git 雷達」分頁間一鍵雙向橫移"""
+        try:
+            # 1. 抓出底部的分頁容器
+            tabs = self.query_one("#bottom-tabs", TabbedContent)
+            
+            # 2. 判斷目前停在哪個分頁，直接將 active 指向另一個 ID！
+            if tabs.active == "tab-packages":
+                tabs.active = "tab-git"
+                self.notify("🌿 鍵盤觸發：已切換至 [bold green]Git 專案管理庫[/]", timeout=1)
+            else:
+                tabs.active = "tab-packages"
+                self.notify("📦 鍵盤觸發：已切換至 [bold blue]系統套件列表[/]", timeout=1)
+                
+        except Exception as e:
+            self.notify(f"❌ 切換分頁失敗: {str(e)}", severity="error")
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
