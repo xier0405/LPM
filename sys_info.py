@@ -1,3 +1,4 @@
+import re
 import shutil
 import asyncio
 import subprocess
@@ -47,7 +48,7 @@ class SysInfo:
                 "uninstall": "paru -Rns --noconfirm {pkgs}",
                 "upgrade_single": "paru -S --needed --noconfirm {pkgs}",
                 "system_upgrade": "paru -Syu --noconfirm && paru -c --noconfirm"
-            },
+                },
             "snap": {
                 "install": "sudo snap install {pkgs} || (echo '\n⚠️ LPM 偵測到套件需要 Classic 沙盒權限，正在自動為您重試...' && sudo snap install {pkgs} --classic)",
                 
@@ -83,7 +84,7 @@ class SysInfo:
             }
         }
 
-    def get_os_name(self) -> str:
+    def  get_os_name(self) -> str:
         """🐧 偵測目前的 Linux 發行版名稱"""
         try:
             with open("/etc/os-release", "r") as f:
@@ -120,32 +121,33 @@ class SysInfo:
 
     # ✨ 核心重構：讓主程式秒讀對應指令的智慧分流器
     def build_command(self, mgr: str, action: str, pkgs: list = None) -> str:
-        """
-        根據套件管理員、動作類型、套件列表，自動生成完美的 Linux 終端機指令。
-        :param mgr: 套件管理員名稱 (例如 'apt', 'yay', 'flatpak')
-        :param action: 動作類型 ('install', 'uninstall', 'upgrade_single', 'system_upgrade')
-        :param pkgs: 套件名稱列表 (如 ['neofetch', 'git'])，全系統更新時可留空
-        :return: 組合完畢的指令字串
-        """
         mgr_lower = mgr.lower()
+
         if mgr_lower not in self._commands_template:
             return f"echo 'LPM 尚未支援 {mgr} 管理員'"
-            
+
         templates = self._commands_template[mgr_lower]
+
         if action not in templates:
             return f"echo '未知的動作類型 {action}'"
-            
+
         template = templates[action]
-        
-        # 如果是全系統更新，不需要套件參數，直接回傳範本
+
         if action == "system_upgrade":
             return template
-            
-        # 如果有傳入套件列表，自動用空白串聯並填入進去
+
         if pkgs:
-            pkgs_str = " ".join(pkgs)
+            safe_pkgs = []
+
+            for pkg in pkgs:
+                if not re.fullmatch(r"[A-Za-z0-9@._+:-]+", pkg):
+                    raise ValueError(f"不安全的套件名稱: {pkg}")
+
+                safe_pkgs.append(pkg)
+
+            pkgs_str = " ".join(safe_pkgs)
             return template.format(pkgs=pkgs_str)
-            
+
         return "echo '指令建構失敗：缺漏套件名稱'"
     
     # ================= 📦 底層套件掃描引擎 =================

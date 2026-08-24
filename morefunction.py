@@ -164,41 +164,62 @@ class CommandTerminalScreen(ModalScreen):
     async def execute_command(self):
         log = self.query_one("#cmd-log")
         btn = self.query_one("#cmd-close")
-        
+
         try:
             import asyncio
-            # ✨ 關鍵魔法：把所有的 sudo 偷偷換成 sudo -S
-            # -S 參數會強迫 sudo 從標準輸入 (stdin) 讀取密碼，而不是實體螢幕！
+
+            if not self.validate_command(self.command):
+                log.write(
+                    "[bold red]❌ 安全機制已阻止不允許的指令。[/bold red]"
+                )
+                return
+
             cmd_to_run = self.command.replace("sudo ", "sudo -S ")
-            
+
             self.process = await asyncio.create_subprocess_shell(
                 cmd_to_run,
-                stdin=asyncio.subprocess.PIPE,  # 🔗 打開標準輸入水管，準備把密碼灌進去
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
+                stderr=asyncio.subprocess.STDOUT,
             )
-            
+
             while True:
                 line = await self.process.stdout.readline()
+
                 if not line:
                     break
-                log.write(line.decode('utf-8', errors='replace').rstrip())
+
+                log.write(
+                    line.decode(
+                        "utf-8",
+                        errors="replace"
+                    ).rstrip()
+                )
 
             await self.process.wait()
-            
-            if self.process.returncode == 0:
-                log.write(f"\n[bold green]✅ 指令執行完畢 (Exit Code: 0)[/bold green]")
-            else:
-                log.write(f"\n[bold red]❌ 執行發生錯誤 (Exit Code: {self.process.returncode})[/bold red]")
-                
-        except Exception as e:
-            log.write(f"\n[bold red]❌ 無法啟動指令: {str(e)}[/bold red]")
 
-        # 執行完畢後，解鎖關閉按鈕，並把輸入框鎖起來
-        btn.disabled = False
-        btn.label = "關閉視窗"
-        btn.variant = "success"
-        self.query_one("#cmd-input").disabled = True
+            if self.process.returncode == 0:
+                log.write(
+                    "\n[bold green]✅ 指令執行完畢 "
+                    "(Exit Code: 0)[/bold green]"
+                )
+            else:
+                log.write(
+                    f"\n[bold red]❌ 執行發生錯誤 "
+                    f"(Exit Code: {self.process.returncode})[/bold red]"
+                )
+
+        except Exception as e:
+            log.write(
+                f"\n[bold red]❌ 無法啟動指令: {str(e)}[/bold red]"
+            )
+
+        finally:
+            btn.disabled = False
+            btn.label = "關閉視窗"
+            btn.variant = "success"
+
+            self.query_one("#cmd-input").disabled = True
 
     # ✨ 攔截輸入框的 Enter 提交事件
     @on(Input.Submitted, "#cmd-input")
@@ -216,6 +237,72 @@ class CommandTerminalScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cmd-close":
             self.dismiss()
+
+    def validate_command(self, command: str) -> bool:
+        """只允許 LPM 自己會使用的套件管理相關指令。"""
+
+        # 明顯危險的 shell 功能直接拒絕
+        dangerous_patterns = [
+            r"`",          # `command`
+            r"\$\(",       # $(command)
+            r">",          # output redirect
+            r"<",          # input redirect
+            r";",          # command separator
+            r"\n",         # 多行 command
+            r"\r",
+        ]
+
+        for pattern in dangerous_patterns:
+            if re.search(pattern, command):
+                return False
+
+    # 允許的實際程式
+        allowed_commands = {
+            "apt",
+            "apt-get",
+            "pacman",
+            "yay",
+            "paru",
+            "snap",
+            "flatpak",
+            "dnf",
+            "zypper",
+            "apk",
+            "emerge",
+            "xbps-install",
+            "xbps-remove", 
+            "brew",
+            "echo",
+            "true",
+        }
+
+        # 把 &&、||、|、(、) 暫時切開，
+        # 再確認每一條真正執行的 command 是我們認識的程式
+        normalized = re.sub(r"[()]", " ", command)
+        segments = re.split(r"\s*(?:&&|\|\||\|)\s*", normalized)
+
+        for segment in segments:
+            segment = segment.strip()
+
+            if not segment:
+                continue
+
+            # sudo / sudo -S 去掉後再檢查真正 command
+            segment = re.sub(r"^sudo(?:\s+-S)?\s+", "", segment)
+
+            parts = segment.split()
+
+            if not parts:
+                continue
+
+            executable = parts[0]
+
+            if executable not in allowed_commands:
+                return False
+
+        return True
+
+
 # ================= 📤 匯出套件列表跳窗 =================
 class ExportModal(ModalScreen):
     """匯出套件清單的專屬視窗 (附帶過濾與即時預覽)"""

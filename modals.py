@@ -162,65 +162,161 @@ class SearchLoadingModal(ModalScreen):
                 # 🚀 放大終端機抓取量到 50 筆，避免真正的套件被截斷
                 fetch_limit = 50
                 out_names = []
-                
+
                 if mgr_name == "apt":
                     cmd = shutil.which("apt-cache") or "apt-cache"
-                    proc = await asyncio.create_subprocess_shell(f"{cmd} search --names-only '{keyword}' 2>/dev/null | awk '{{print $1}}' | head -n {fetch_limit}", stdout=asyncio.subprocess.PIPE)
+
+                    proc = await asyncio.create_subprocess_exec(
+                        cmd,
+                        "search",
+                        "--names-only",
+                        keyword,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+
                     out, _ = await proc.communicate()
-                    out_names = [n for n in out.decode('utf-8', errors='ignore').strip().split('\n') if n]
-                    
+
+                    lines = out.decode("utf-8", errors="ignore").splitlines()
+
+                    out_names = [
+                        line.split()[0]
+                        for line in lines[:fetch_limit]
+                        if line.strip()
+                    ]
+
                 elif mgr_name == "snap":
                     cmd = shutil.which("snap") or "snap"
-                    proc = await asyncio.create_subprocess_shell(f"{cmd} find '{keyword}' 2>/dev/null | awk 'NR>1 {{print $1}}' | head -n {fetch_limit}", stdout=asyncio.subprocess.PIPE)
+                
+                    proc = await asyncio.create_subprocess_exec(
+                        cmd,
+                        "find",
+                        keyword,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                
                     out, _ = await proc.communicate()
-                    out_names = [n for n in out.decode('utf-8', errors='ignore').strip().split('\n') if n and "No" not in n]
-                    
+
+                    lines = out.decode("utf-8", errors="ignore").splitlines()
+
+                    out_names = [
+                        line.split()[0]
+                        for line in lines[1:fetch_limit + 1]
+                        if line.strip() and "No" not in line
+                    ]
+
                 elif mgr_name == "flatpak":
                     cmd = shutil.which("flatpak") or "flatpak"
-                    proc = await asyncio.create_subprocess_shell(f"{cmd} search --columns=application '{keyword}' 2>/dev/null | head -n {fetch_limit}", stdout=asyncio.subprocess.PIPE)
+                
+                    proc = await asyncio.create_subprocess_exec(
+                        cmd,
+                        "search",
+                        "--columns=application",
+                        keyword,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                
                     out, _ = await proc.communicate()
-                    out_names = [n for n in out.decode('utf-8', errors='ignore').strip().split('\n') if n and "Application" not in n and "---" not in n]
-                    
+
+                    lines = out.decode("utf-8", errors="ignore").splitlines()
+
+                    out_names = [
+                        line.strip()
+                        for line in lines[:fetch_limit]
+                        if line.strip()
+                        and "Application" not in line
+                        and "---" not in line
+                    ]
+
                 elif mgr_name == "pacman":
                     cmd = shutil.which("pacman") or "pacman"
-                    proc = await asyncio.create_subprocess_shell(f"{cmd} -Ssq '{keyword}' 2>/dev/null | head -n {fetch_limit}", stdout=asyncio.subprocess.PIPE)
+                
+                    proc = await asyncio.create_subprocess_exec(
+                            cmd,
+                            "-Ssq",
+                            keyword,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.DEVNULL,
+                        )
+                
                     out, _ = await proc.communicate()
-                    out_names = [n for n in out.decode('utf-8', errors='ignore').strip().split('\n') if n]
-                    
+
+                    out_names = [
+                        line
+                        for line in out.decode("utf-8", errors="ignore").splitlines()[:fetch_limit]
+                        if line
+                    ]
+
                 elif mgr_name == "yay":
                     cmd = shutil.which("yay") or "yay"
-                    proc = await asyncio.create_subprocess_shell(f"{cmd} -Ssq '{keyword}' 2>/dev/null | head -n {fetch_limit}", stdout=asyncio.subprocess.PIPE)
+
+                    proc = await asyncio.create_subprocess_exec(
+                        cmd,
+                        "-Ssq",
+                        keyword,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+
                     out, _ = await proc.communicate()
-                    out_names = [n for n in out.decode('utf-8', errors='ignore').strip().split('\n') if n]
-                    
+
+                    out_names = [
+                        line
+                        for line in out.decode("utf-8", errors="ignore").splitlines()[:fetch_limit]
+                        if line
+                    ]
+
                 elif mgr_name == "paru":
                     cmd = shutil.which("paru") or "paru"
-                    proc = await asyncio.create_subprocess_shell(f"{cmd} -Ssq '{keyword}' 2>/dev/null | head -n {fetch_limit}", stdout=asyncio.subprocess.PIPE)
+
+                    proc = await asyncio.create_subprocess_exec(
+                        cmd,
+                        "-Ssq",
+                        keyword,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+
                     out, _ = await proc.communicate()
-                    out_names = [n for n in out.decode('utf-8', errors='ignore').strip().split('\n') if n]
+
+                    out_names = [
+                        line
+                        for line in out.decode("utf-8", errors="ignore").splitlines()[:fetch_limit]
+                        if line
+                    ]
                 
-                # 🧠 核心精準度演算法：幫抓出來的套件打分數 (越小越優先)
+            # 核心精準度演算法：幫搜尋結果評分，數字越小越優先
                 def rank_pkg(pkg):
                     pkg_l = pkg.lower()
-                    # 階級 0: 完全命中
-                    if pkg_l == kw_hyphen or pkg_l == kw_lower: return 0
-                    # 階級 1: 開頭完全吻合 (例如 google-chrome)
-                    if pkg_l.startswith(kw_hyphen) or pkg_l.startswith(kw_lower): return 1
-                    # 階級 2: 名字裡面包含連字號關鍵字
-                    if kw_hyphen in pkg_l: return 2
-                    # 階級 3: 包含以空白分割的所有單字 (google, chro)
+
+                    # 0：完全符合
+                    if pkg_l == kw_hyphen or pkg_l == kw_lower:
+                        return 0
+
+                    # 1：套件名稱以關鍵字開頭
+                    if pkg_l.startswith(kw_hyphen) or pkg_l.startswith(kw_lower):
+                        return 1
+
+                    # 2：包含連字號形式
+                    if kw_hyphen in pkg_l:
+                        return 2
+
+                    # 3：包含所有搜尋單字
                     parts = kw_lower.split()
-                    if all(p in pkg_l for p in parts): return 3
-                    # 階級 4: 其他靠描述混進來的雜魚
+                    if all(p in pkg_l for p in parts):
+                        return 3
+
+                    # 4：其他結果
                     return 4
 
-                # 依據精準度排序，然後只取最前面的 8 個精華！
                 sorted_names = sorted(out_names, key=rank_pkg)
                 return (mgr_name, sorted_names[:8])
-
-            except Exception: 
-                pass 
-            return (mgr_name, [])
+        
+            except Exception as e:
+                print(f"[DEBUG] {mgr_name} 搜尋失敗: {e}")
+                return (mgr_name, [])
 
         # 任務派發
         if sys_status.get("apt"): tasks.append(fetch_candidates("apt", kw))
