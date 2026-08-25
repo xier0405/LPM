@@ -2,6 +2,7 @@ import re
 import shutil
 import asyncio
 import subprocess
+from models import Package
 
 class SysInfo:
     """專門負責底層作業系統偵測、硬體環境、以及各發行版核心指令範本的獨立大腦"""
@@ -180,7 +181,7 @@ class SysInfo:
                         elif "大小" in line or "Size" in line: size = line.split(":", 1)[1].strip() if ":" in line else size
                     if name and version:
                         display_size = size.replace("KiB", "KB").replace("MiB", "MB").replace("GiB", "GB").replace("TiB", "TB")
-                        packages.append({"manager": "pacman", "name": name, "version": version, "size": display_size})
+                        packages.append(Package(manager="pacman",name=name,version=version,size=display_size))
         except Exception: pass
 
     async def _scan_apt(self, packages):
@@ -199,7 +200,7 @@ class SysInfo:
                             size_kb = float(raw_size)
                             display_size = f"{size_kb / 1024:.2f} MB" if size_kb > 1024 else f"{size_kb:.2f} KB"
                         else: display_size = "未知"
-                        packages.append({"manager": "apt", "name": name, "version": version, "size": display_size})
+                        packages.append(Package(manager="apt",name=name,version=version,size=display_size))
         except Exception: pass
 
     async def _scan_snap(self, packages):
@@ -216,7 +217,7 @@ class SysInfo:
                         # ✨ 你的幽靈防護網在這裡！
                         if version == "-" or "broken" in line.lower():
                             continue
-                        packages.append({"manager": "snap", "name": name, "version": version, "size": "沙盒管理"})
+                        packages.append(Package(manager="snap",name=name,version=version,size="沙盒管理"))
         except Exception: pass
 
     async def _scan_flatpak(self, packages):
@@ -234,5 +235,5 @@ class SysInfo:
                     if len(parts) >= 1:
                         name = parts[0].strip()
                         version = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "未知"
-                        packages.append({"manager": "flatpak", "name": name, "version": version, "size": "沙盒管理"})
+                        packages.append(Package(manager="flatpak",name=name,version=version,size="沙盒管理"))
         except Exception: pass

@@ -23,13 +23,25 @@ def pre_flight_check():
             print(f"📦 發現缺少必備套件：{pip_name}，正在為您自動下載安裝...")
             try:
                 # 建構標準 pip 安裝指令
-                pip_cmd = [sys.executable, "-m", "pip", "install", pip_name, "--quiet"]
-                
-                # ✨ 終極防禦：如果在 Arch / Ubuntu 等實施 PEP 668 的系統且「不在 venv 內」，自動繞過封印！
                 if not in_venv:
-                    pip_cmd.append("--break-system-packages")
-                
+                    print("❌ 目前沒有啟用 Python 虛擬環境。")
+                    print("💡 請先執行：")
+                    print("   python3 -m venv .venv")
+                    print("   source .venv/bin/activate")
+                    print("   pip install -r requirements.txt")
+                    sys.exit(1)
+
+                pip_cmd = [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    pip_name,
+                    "--quiet",
+                ]
+
                 subprocess.check_call(pip_cmd)
+                
                 print(f"✅ {pip_name} 自動安裝與載入完成！")
             except Exception as e:
                 print(f"❌ 自動安裝 {pip_name} 失敗！原因: {e}")
@@ -37,7 +49,14 @@ def pre_flight_check():
                 sys.exit(1)
 
     # 📄 2. 檢查並自動下載缺少的 LPM 核心檔案 (從你的 GitHub 專案自動抓取)
-    core_files = ["modals.py", "morefunction.py", "sys_info.py", "theme.py", "search.py"]
+    core_files = [
+    "modals.py",
+    "morefunction.py",
+    "sys_info.py",
+    "theme.py",
+    "search.py",
+    "models.py",
+    ]
     # 這裡直接對接你的 GitHub Raw 網址
     repo_base_url = "https://raw.githubusercontent.com/shamash970405/LPM/main/"
     
@@ -540,7 +559,7 @@ class LinuxPackageManagerApp(App):
         
         filtered = []
         for pkg in packages_source:
-            if search_lower and search_lower not in str(pkg.get("name", "")).lower():
+            if search_lower and search_lower not in pkg.name.lower():
                 continue
             filtered.append(pkg)
     
@@ -552,7 +571,7 @@ class LinuxPackageManagerApp(App):
         def get_val(x):
             # ⚖️ 容量轉換數字邏輯
             if target == "size":
-                size_str = str(x.get("size", "0")).upper()
+                size_str = str(x.size).upper()
                 try:
                     if "GB" in size_str: return float(size_str.replace("GB", "").strip()) * 1024 * 1024 * 1024
                     elif "MB" in size_str: return float(size_str.replace("MB", "").strip()) * 1024 * 1024
@@ -561,13 +580,16 @@ class LinuxPackageManagerApp(App):
                     else: return 0.0
                 except Exception: return 0.0
             # 🔤 其他文字邏輯
-            elif target == "group": return str(x.get("group", "System")).lower()
-            elif target == "manager": return str(x.get("manager", "")).lower()
-            else: return str(x.get("name", "")).lower()
+            elif target == "group":
+                return x.group.lower()
+            elif target == "manager":
+                return x.manager.lower()
+            else:
+                return x.name.lower()
 
         # ✂️ 拆出優先名單與一般名單
-        priority_pkgs = [p for p in filtered if p.get("manager") == priority_mgr]
-        other_pkgs = [p for p in filtered if p.get("manager") != priority_mgr]
+        priority_pkgs = [p for p in filtered if p.manager == priority_mgr]
+        other_pkgs = [p for p in filtered if p.manager != priority_mgr]
 
         # ⚖️ 兩邊各自乖乖依照容量或名稱排序
         priority_pkgs.sort(key=get_val, reverse=is_desc)
@@ -578,16 +600,16 @@ class LinuxPackageManagerApp(App):
 
         # 5. 畫出符合條件的套件
         for pkg in final_list:
-            pkg_manager = pkg.get("manager", "unknown")
-            pkg_name = pkg.get("name", "unknown")
-            pkg_version = pkg.get("version", "unknown")
-            pkg_size = pkg.get("size", "N/A")
+            pkg_manager = pkg.manager
+            pkg_name = pkg.name
+            pkg_version = pkg.version
+            pkg_size = pkg.size
             
             # 🧠 應用群組智能分類
-            app_group = pkg.get("group", "System")
-            if "gnome" in pkg_name.lower() or "gtk" in pkg_name.lower(): app_group = "GNOME"
-            elif "kde" in pkg_name.lower() or "qt" in pkg_name.lower(): app_group = "KDE"
-            elif pkg_name in ["python3", "gcc", "git", "make"]: app_group = "Development"
+            app_group = pkg.group
+            if "gnome" in pkg_name.lower() or "gtk" in pkg_name.lower(): app_group = pkg.group
+            elif "kde" in pkg_name.lower() or "qt" in pkg_name.lower(): app_group = pkg.group
+            elif pkg_name in ["python3", "gcc", "git", "make"]: app_group = pkg.group
 
             table.add_row(
                 f"[bold #e0af68]{pkg_manager}[/]",
@@ -1150,37 +1172,37 @@ class LinuxPackageManagerApp(App):
                     await asyncio.sleep(1)
                     
             asyncio.create_task(exact_refresh())
-
     def generate_uninstall_cmd_from_names(self, target_pkg_names: list) -> str:
-        """🧠 大一統卸載大腦：自動比對來源並產出跨通路卸載指令 (內建型態防範)"""
         installed_db = getattr(self, "raw_packages", [])
         grouped_tasks = {}
-        
+
         for target_pkg in target_pkg_names:
             found_mgr = None
-            
-            # ✨ 終極防禦：嚴格確認 installed_pkg 是字典 (dict) 才呼叫 .get()，若是 pure string 則安全比對！
-            for installed_pkg in installed_db:
-                if isinstance(installed_pkg, dict):
-                    if installed_pkg.get("name") == target_pkg or installed_pkg.get("pkg") == target_pkg:
-                        found_mgr = installed_pkg.get("manager")
-                        break
-                elif isinstance(installed_pkg, str):
-                    if installed_pkg == target_pkg:
-                        break
-                    
-            if not found_mgr:
-                # 🛡️ 沒找到就 fallback 給預設套件管理員
-                fallback_mgr = getattr(self, "preferred_mgr", "apt")
-                found_mgr = fallback_mgr if self.sys_status.get(fallback_mgr) else "apt"
-                
-            grouped_tasks.setdefault(found_mgr, []).append(target_pkg)
-            
+
+        for installed_pkg in installed_db:
+            if installed_pkg.name == target_pkg:
+                found_mgr = installed_pkg.manager
+                break
+
+        if not found_mgr:
+            fallback_mgr = getattr(self, "preferred_mgr", "apt")
+            found_mgr = fallback_mgr if self.sys_status.get(fallback_mgr) else "apt"
+
+        grouped_tasks.setdefault(found_mgr, []).append(target_pkg)
+
         cmd_list = []
+
         for mgr, pkgs in grouped_tasks.items():
-            cmd_list.append(self.sys_info.build_command(mgr=mgr, action="uninstall", pkgs=pkgs))
-            
+            cmd_list.append(
+                self.sys_info.build_command(
+                    mgr=mgr,
+                    action="uninstall",
+                    pkgs=pkgs
+                )
+            )
+
         return " && ".join(cmd_list)
+    
 
     # ✨ 補上剛剛漏掉的共用卸載大腦！(注意要縮排 4 格)
     def perform_batch_uninstall(self, target_pkg_names: list, success_msg: str = "🗑️ 批次卸載程序完成，套件清單已同步！") -> None:
@@ -1197,37 +1219,6 @@ class LinuxPackageManagerApp(App):
             self.clear_notifications()
             
         self.execute_and_refresh(uninstall_cmd, success_msg)
-
-    def generate_uninstall_cmd_from_names(self, target_pkg_names: list) -> str:
-        """🧠 大一統卸載大腦：自動比對來源並產出跨通路卸載指令 (內建型態防範)"""
-        installed_db = getattr(self, "raw_packages", [])
-        grouped_tasks = {}
-        
-        for target_pkg in target_pkg_names:
-            found_mgr = None
-            
-            # ✨ 終極防禦：嚴格確認 installed_pkg 是字典 (dict) 才呼叫 .get()，若是 pure string 則安全比對！
-            for installed_pkg in installed_db:
-                if isinstance(installed_pkg, dict):
-                    if installed_pkg.get("name") == target_pkg or installed_pkg.get("pkg") == target_pkg:
-                        found_mgr = installed_pkg.get("manager")
-                        break
-                elif isinstance(installed_pkg, str):
-                    if installed_pkg == target_pkg:
-                        break
-                    
-            if not found_mgr:
-                # 🛡️ 沒找到就 fallback 給預設套件管理員
-                fallback_mgr = getattr(self, "preferred_mgr", "apt")
-                found_mgr = fallback_mgr if self.sys_status.get(fallback_mgr) else "apt"
-                
-            grouped_tasks.setdefault(found_mgr, []).append(target_pkg)
-            
-        cmd_list = []
-        for mgr, pkgs in grouped_tasks.items():
-            cmd_list.append(self.sys_info.build_command(mgr=mgr, action="uninstall", pkgs=pkgs))
-            
-        return " && ".join(cmd_list)
 
     async def scan_git_repos(self) -> list:
         """🔍 異步智能掃描常用目錄下的 Git 專案庫"""
@@ -1405,14 +1396,14 @@ class LinuxPackageManagerApp(App):
                 # ✨ 關鍵補刀：針對每一個已安裝的管理員，計算真實套件數量並更新對應的標籤！
                 for mgr, avail in self.sys_status.items():
                     if avail:
-                        mgr_count = sum(1 for p in getattr(self, "raw_packages", []) if p.get("manager") == mgr)
+                        mgr_count = sum(1 for p in getattr(self, "raw_packages", []) if p.manager == mgr)
                         try:
                             lbl = self.query_one(f"#lbl-{mgr}")
                             lbl.update(f"   - {mgr} [bold #e0af68]({mgr_count})[/]")
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+                        except Exception as e:
+                            self.notify(f"❌ 左側資訊更新失敗: {e}", severity="error")
+        except Exception as e:
+            self.notify(f"❌ 左側資訊更新失敗: {e}", severity="error")
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """🔄 當使用者切換下方分頁時，瞬間變身左上角面板！"""
