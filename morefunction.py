@@ -7,6 +7,7 @@ from textual.binding import Binding
 from collections import defaultdict
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
+from command_security import validate_command
 from textual.widgets.option_list import Option
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Label, OptionList, Input, Select, Button, Checkbox, TextArea, RichLog, DataTable
@@ -168,7 +169,7 @@ class CommandTerminalScreen(ModalScreen):
         try:
             import asyncio
 
-            if not self.validate_command(self.command):
+            if not validate_command(self.command):
                 log.write(
                     "[bold red]❌ 安全機制已阻止不允許的指令。[/bold red]"
                 )
@@ -237,71 +238,6 @@ class CommandTerminalScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cmd-close":
             self.dismiss()
-
-    def validate_command(self, command: str) -> bool:
-        """只允許 LPM 自己會使用的套件管理相關指令。"""
-
-        # 明顯危險的 shell 功能直接拒絕
-        dangerous_patterns = [
-            r"`",          # `command`
-            r"\$\(",       # $(command)
-            r">",          # output redirect
-            r"<",          # input redirect
-            r";",          # command separator
-            r"\n",         # 多行 command
-            r"\r",
-        ]
-
-        for pattern in dangerous_patterns:
-            if re.search(pattern, command):
-                return False
-
-    # 允許的實際程式
-        allowed_commands = {
-            "apt",
-            "apt-get",
-            "pacman",
-            "yay",
-            "paru",
-            "snap",
-            "flatpak",
-            "dnf",
-            "zypper",
-            "apk",
-            "emerge",
-            "xbps-install",
-            "xbps-remove", 
-            "brew",
-            "echo",
-            "true",
-        }
-
-        # 把 &&、||、|、(、) 暫時切開，
-        # 再確認每一條真正執行的 command 是我們認識的程式
-        normalized = re.sub(r"[()]", " ", command)
-        segments = re.split(r"\s*(?:&&|\|\||\|)\s*", normalized)
-
-        for segment in segments:
-            segment = segment.strip()
-
-            if not segment:
-                continue
-
-            # sudo / sudo -S 去掉後再檢查真正 command
-            segment = re.sub(r"^sudo(?:\s+-S)?\s+", "", segment)
-
-            parts = segment.split()
-
-            if not parts:
-                continue
-
-            executable = parts[0]
-
-            if executable not in allowed_commands:
-                return False
-
-        return True
-
 
 # ================= 📤 匯出套件列表跳窗 =================
 class ExportModal(ModalScreen):

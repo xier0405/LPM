@@ -41,7 +41,7 @@ def pre_flight_check():
                 ]
 
                 subprocess.check_call(pip_cmd)
-                
+
                 print(f"✅ {pip_name} 自動安裝與載入完成！")
             except Exception as e:
                 print(f"❌ 自動安裝 {pip_name} 失敗！原因: {e}")
@@ -56,6 +56,7 @@ def pre_flight_check():
     "theme.py",
     "search.py",
     "models.py",
+    "command_security.py",
     ]
     # 這裡直接對接你的 GitHub Raw 網址
     repo_base_url = "https://raw.githubusercontent.com/shamash970405/LPM/main/"
@@ -92,6 +93,7 @@ from textual.screen import ModalScreen
 from morefunction import SettingsScreen
 from morefunction import ThemeMenuScreen
 from textual.app import App, ComposeResult
+from command_security import validate_command
 from textual.widgets.option_list import Option
 from textual.containers import Horizontal, Vertical
 from morefunction import EscMenuScreen, PackageTable
@@ -607,9 +609,10 @@ class LinuxPackageManagerApp(App):
             
             # 🧠 應用群組智能分類
             app_group = pkg.group
-            if "gnome" in pkg_name.lower() or "gtk" in pkg_name.lower(): app_group = pkg.group
-            elif "kde" in pkg_name.lower() or "qt" in pkg_name.lower(): app_group = pkg.group
-            elif pkg_name in ["python3", "gcc", "git", "make"]: app_group = pkg.group
+
+            if "gnome" in pkg_name.lower() or "gtk" in pkg_name.lower(): app_group = "GNOME"
+            elif "kde" in pkg_name.lower() or "qt" in pkg_name.lower(): app_group = "KDE"
+            elif pkg_name in ["python3", "gcc", "git", "make"]: app_group = "Development"
 
             table.add_row(
                 f"[bold #e0af68]{pkg_manager}[/]",
@@ -819,28 +822,18 @@ class LinuxPackageManagerApp(App):
                             clean_cmds.append("flatpak uninstall --unused -y")
                         if self.sys_status.get("pacman"):
                             cmd.append("sudo pacman -Syu --noconfirm")
-                            clean_cmds.append("sudo pacman -Rns $(pacman -Qtdq) 2>/dev/null || echo '✨ 沒有發現孤立的相依套件'")
+                            clean_cmds.append("(pacman -Qdtq | sudo pacman -Rns - || true)")
                         if self.sys_status.get("dnf"):
                             cmd.append("sudo dnf upgrade -y")
                             clean_cmds.append("sudo dnf autoremove -y")
                         if self.sys_status.get("zypper"):
                             cmd.append("sudo zypper update -y")
 
-                        base_update = " && ".join(cmd) if cmd else "echo '找不到支援的更新指令'"
-                        
-                        # 2. 組合互動式 Bash 詢問語法
-                        if clean_cmds:
-                            combined_clean = " && ".join(clean_cmds)
-                            ask_clean_script = (
-                                f"; echo ''; "
-                                f"read -p '🗑️ 系統升級完成！是否要順便掃描並清除不需要的孤立套件 (autoremove)? [y/N]: ' do_clean; "
-                                f"if [[ \"$do_clean\" =~ ^[Yy]$ ]]; then "
-                                f"echo '🚀 正在清理系統垃圾...'; {combined_clean}; "
-                                f"else echo '💡 已跳過清理步驟。'; fi"
-                            )
-                            final_cmd = base_update + ask_clean_script
+                        if cmd:
+                            all_commands = cmd + clean_cmds
+                            final_cmd = " && ".join(all_commands)
                         else:
-                            final_cmd = base_update
+                            final_cmd = "echo '找不到支援的更新指令'"
 
                         # ✨ 透過共用引擎發射 (結束後自動觸發 TUI 背景重整與關閉提示)
                         execute_update_cmd(final_cmd)
@@ -1119,6 +1112,13 @@ class LinuxPackageManagerApp(App):
             self.notify("⚠️ 沒有產生有效的執行指令！", severity="warning")
             return
 
+        if not validate_command(cmd):
+            self.notify(
+                "❌ 安全機制已阻止不允許的指令。",
+                severity="error"
+            )
+            return
+
         import asyncio
         if getattr(self, "ssh_mode", False):
             # 💻 SSH 模式：呼叫 TUI 內建終端機
@@ -1179,16 +1179,16 @@ class LinuxPackageManagerApp(App):
         for target_pkg in target_pkg_names:
             found_mgr = None
 
-        for installed_pkg in installed_db:
-            if installed_pkg.name == target_pkg:
-                found_mgr = installed_pkg.manager
-                break
+            for installed_pkg in installed_db:
+                if installed_pkg.name == target_pkg:
+                    found_mgr = installed_pkg.manager
+                    break
 
-        if not found_mgr:
-            fallback_mgr = getattr(self, "preferred_mgr", "apt")
-            found_mgr = fallback_mgr if self.sys_status.get(fallback_mgr) else "apt"
+            if not found_mgr:
+                fallback_mgr = getattr(self, "preferred_mgr", "apt")
+                found_mgr = fallback_mgr if self.sys_status.get(fallback_mgr) else "apt"
 
-        grouped_tasks.setdefault(found_mgr, []).append(target_pkg)
+            grouped_tasks.setdefault(found_mgr, []).append(target_pkg)
 
         cmd_list = []
 
