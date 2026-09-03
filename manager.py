@@ -997,11 +997,6 @@ class LinuxPackageManagerApp(App):
                                 if os.path.exists(signal_file):
                                     try: os.remove(signal_file)
                                     except Exception: pass
-
-                                terminal_cmd = None
-                                for term in ["konsole", "gnome-terminal", "xfce4-terminal", "kitty", "alacritty", "xterm"]:
-                                    if shutil.which(term) is not None:
-                                        terminal_cmd = term; break
                                 
                                     if not validate_command(final_cmd):
                                         self.notify(
@@ -1013,13 +1008,8 @@ class LinuxPackageManagerApp(App):
                                 bash_cmd = f"{final_cmd}; touch {signal_file}; read -p '執行完畢，按 [Enter] 關閉視窗...'"
                                 
                                 try:
-                                    if terminal_cmd == "gnome-terminal":
-                                        subprocess.Popen(["gnome-terminal", "--", "bash", "-c", bash_cmd])
-                                    elif terminal_cmd in ["konsole", "xfce4-terminal", "kitty", "alacritty", "xterm"]:
-                                        subprocess.Popen([terminal_cmd, "-e", f"bash -c \"{bash_cmd}\""])
-                                    else:
-                                        subprocess.Popen(["bash", "-c", bash_cmd])
-                                except Exception as e:
+                                    self.launch_external_terminal(bash_cmd)
+                                except Exception as e:                          
                                     self.notify(f"❌ 啟動匯入程序失敗: {str(e)}", severity="error")
                                 
                                 async def exact_refresh():
@@ -1095,11 +1085,14 @@ class LinuxPackageManagerApp(App):
         else:
             # 🖥️ 桌面 GUI 模式：呼叫外部系統終端機
             import shutil, subprocess
-            terminal_cmd = None
-            for term in ["konsole", "gnome-terminal", "xfce4-terminal", "kitty", "alacritty", "xterm"]:
-                if shutil.which(term) is not None:
-                    terminal_cmd = term
-                    break
+
+            try:
+                self.launch_external_terminal(bash_cmd)
+            except Exception as e:
+                self.notify(
+                    f"❌ 啟動安裝程序失敗: {str(e)}",
+                    severity="error"
+                    )
 
                 if not validate_command(final_cmd):
                     self.notify(
@@ -1111,14 +1104,12 @@ class LinuxPackageManagerApp(App):
             bash_cmd = f"{cmd}; read -p '安裝完畢！請按 [Enter] 關閉視窗，並重新啟動 LPM 即可生效...'"
             
             try:
-                if terminal_cmd == "gnome-terminal":
-                    subprocess.Popen(["gnome-terminal", "--", "bash", "-c", bash_cmd])
-                elif terminal_cmd in ["konsole", "xfce4-terminal", "kitty", "alacritty", "xterm"]:
-                    subprocess.Popen([terminal_cmd, "-e", f"bash -c \"{bash_cmd}\""])
-                else:
-                    subprocess.Popen(["bash", "-c", bash_cmd])
+                self.launch_external_terminal(bash_cmd)
             except Exception as e:
-                self.notify(f"❌ 啟動安裝程序失敗: {str(e)}", severity="error")
+                self.notify(
+                f"❌ 啟動安裝程序失敗: {str(e)}",
+                severity="error"
+            )
 
     def execute_and_refresh(self, cmd: str, success_msg: str = "📦 系統套件清單已即時同步！") -> None:
         """🚀 終極大一統引擎：負責執行指令、判斷 SSH 模式，並在結束後精準自動刷新套件清單"""
