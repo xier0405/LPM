@@ -1152,15 +1152,12 @@ class LinuxPackageManagerApp(App):
             bash_cmd = f"{cmd}; touch {signal_file}; read -p '執行完畢，按 [Enter] 關閉視窗...'"
             
             try:
-                if terminal_cmd == "gnome-terminal":
-                    subprocess.Popen(["gnome-terminal", "--", "bash", "-c", bash_cmd])
-                elif terminal_cmd in ["konsole", "xfce4-terminal", "kitty", "alacritty", "xterm"]:
-                    subprocess.Popen([terminal_cmd, "-e", f"bash -c \"{bash_cmd}\""])
-                else:
-                    subprocess.Popen(["bash", "-c", bash_cmd])
+                self.launch_external_terminal(bash_cmd)
             except Exception as e:
-                self.notify(f"❌ 啟動外部終端機失敗: {str(e)}", severity="error")
-                return
+                self.notify(
+                    f"❌ 啟動安裝程序失敗: {str(e)}",
+                    severity="error"
+                )
             
             # 🚀 啟動背景監聽任務，一旦偵測到訊號檔產生，就立刻刷新！
             async def exact_refresh():
