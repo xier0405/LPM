@@ -1423,6 +1423,58 @@ class LinuxPackageManagerApp(App):
         """🔄 當使用者切換下方分頁時，瞬間變身左上角面板！"""
         self.update_left_info_panel()
 
+    def launch_external_terminal(self, command: str) -> None:
+        """在桌面環境中開啟外部 terminal 執行指令。"""
+
+        import shutil
+        import subprocess
+
+        terminal_cmd = None
+
+        for term in [
+            "konsole",
+            "gnome-terminal",
+            "xfce4-terminal",
+            "kitty",
+            "alacritty",
+            "xterm",
+        ]:
+            if shutil.which(term) is not None:
+                terminal_cmd = term
+                break
+
+        if terminal_cmd == "gnome-terminal":
+            subprocess.Popen([
+                "gnome-terminal",
+                "--",
+                "bash",
+                "-c",
+                command,
+            ])
+
+        elif terminal_cmd in [
+            "konsole",
+            "xfce4-terminal",
+            "kitty",
+            "alacritty",
+            "xterm",
+        ]:
+
+            subprocess.Popen([
+                terminal_cmd,
+                "-e",
+                "bash",
+                "-c",
+                command,
+            ])
+
+        else:  
+            subprocess.Popen([
+                "bash",
+                "-c",
+                command,
+            ])
+
 if __name__ == "__main__":
     app = LinuxPackageManagerApp()
     app.run()
