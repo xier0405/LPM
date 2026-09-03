@@ -1003,6 +1003,13 @@ class LinuxPackageManagerApp(App):
                                     if shutil.which(term) is not None:
                                         terminal_cmd = term; break
                                 
+                                    if not validate_command(final_cmd):
+                                        self.notify(
+                                            "❌ 安全機制已阻止不允許的匯入指令。",
+                                            severity="error"
+                                        )
+                                        return
+
                                 bash_cmd = f"{final_cmd}; touch {signal_file}; read -p '執行完畢，按 [Enter] 關閉視窗...'"
                                 
                                 try:
@@ -1093,6 +1100,13 @@ class LinuxPackageManagerApp(App):
                 if shutil.which(term) is not None:
                     terminal_cmd = term
                     break
+
+                if not validate_command(final_cmd):
+                    self.notify(
+                        "❌ 安全機制已阻止不允許的匯入指令。",
+                            severity="error"
+                    )
+                    return
             
             bash_cmd = f"{cmd}; read -p '安裝完畢！請按 [Enter] 關閉視窗，並重新啟動 LPM 即可生效...'"
             
