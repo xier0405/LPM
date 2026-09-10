@@ -61,6 +61,11 @@ class SettingsScreen(ModalScreen):
     #setting-cancel { margin-right: 2; }
     """
 
+    BINDINGS = [
+    ("escape", "cancel_settings", "返回"),
+
+    ]
+
     # ✨ 新增 sys_status 參數來接收系統狀態
     def __init__(self, current_token: str = "", ssh_mode: bool = False, preferred_mgr: str = "apt", sys_status: dict = None) -> None:
         super().__init__()
@@ -121,6 +126,9 @@ class SettingsScreen(ModalScreen):
             from modals import SysInfoPreviewModal 
             self.app.push_screen(SysInfoPreviewModal())
             return
+
+    def action_cancel_settings(self) -> None:
+        self.dismiss(None)
 
 # ================= 💻 內建終端機執行跳窗 (SSH 專用) =================
 class CommandTerminalScreen(ModalScreen):
