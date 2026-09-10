@@ -13,6 +13,17 @@ from textual.containers import Vertical, Horizontal
 from textual.widgets import Label, OptionList, Input, Select, Button, Checkbox, TextArea, RichLog, DataTable
 
 
+class BackableModalScreen(ModalScreen):
+    BINDINGS = [
+        ("escape", "go_back", "返回"),
+    ]
+
+    def action_go_back(self) -> None:
+        self.go_back()
+
+    def go_back(self) -> None:
+        self.dismiss(None)
+
 # ================= 🎨 佈景主題切換跳窗 =================
 class ThemeMenuScreen(ModalScreen):
     """自訂的主題切換跳窗"""
@@ -47,7 +58,7 @@ class ThemeMenuScreen(ModalScreen):
             self.dismiss("")
 
 # ================= ⚙️ 系統設定中心跳窗 =================
-class SettingsScreen(ModalScreen):
+class SettingsScreen(BackableModalScreen):
     """彈出的系統設定視窗，支援多重 AI 選擇、API Token 輸入與 SSH 模式"""
     
     CSS = """
@@ -102,7 +113,7 @@ class SettingsScreen(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "setting-cancel":
-            self.dismiss(None)
+            self.go_back()
             return
 
         if event.button.id == "setting-save":
@@ -114,7 +125,7 @@ class SettingsScreen(ModalScreen):
             # 移除檢查 ai_choice 是否為空或 Select.BLANK 的邏輯
             # 並直接 dismiss，即使 ai_choice 是空的
             self.notify(f"✅ 設定已更新！SSH 模式: {'開啟' if ssh_mode else '關閉'}")
-            self.dismiss({
+            self.go_back()({
                 "ai_engine": ai_choice if ai_choice and ai_choice != Select.BLANK else None, # 將空值或 BLANK 轉換為 None
                 "api_token": api_token, 
                 "ssh_mode": ssh_mode, 
@@ -128,7 +139,7 @@ class SettingsScreen(ModalScreen):
             return
 
     def action_cancel_settings(self) -> None:
-        self.dismiss(None)
+        self.go_back()
 
 # ================= 💻 內建終端機執行跳窗 (SSH 專用) =================
 class CommandTerminalScreen(ModalScreen):
@@ -590,7 +601,7 @@ class PackageUpdateModal(ModalScreen):
             self.dismiss(selected)
 
 # ================= 2. ESC 按鍵彈出的控制選單 =================
-class EscMenuScreen(ModalScreen):
+class EscMenuScreen(BackableModalScreen):
     """按 ESC 鍵彈出的系統選單"""
 
     BINDINGS = [
@@ -646,8 +657,5 @@ class EscMenuScreen(ModalScreen):
 class PackageTable(DataTable):
     """LPM 專用套件表格"""
 
-    BINDINGS = [
-    ("escape", "dismiss_menu", "關閉選單"),
-
-    ]
+    BINDINGS = []
     pass 
