@@ -793,80 +793,54 @@ class LinuxPackageManagerApp(App):
                 )
 
             # 🔄 處理系統與套件更新
-            # 🔄 處理系統與套件更新
             elif action == "update_system":
-                from morefunction import UpdateChoiceModal, PackageUpdateModal
+                cmd = []
+                clean_cmds = []
 
-                # ✨ 透過共用引擎發射 (一行搞定！)
-                def execute_update_cmd(final_cmd: str):
-                    self.execute_and_refresh(final_cmd, "🔄 系統升級任務完成，清單已同步！")
+                # APT / Ubuntu / Debian
+                if self.sys_status.get("apt"):
+                    cmd.append("sudo apt update && sudo apt upgrade -y")
+                    clean_cmds.append("sudo apt autoremove -y && sudo apt autoclean")
 
-                # ========================================================
+                # Snap
+                if self.sys_status.get("snap"):
+                    cmd.append("sudo snap refresh")
 
-                def handle_update_choice(choice: str | None) -> None:
-                    if not choice: return
-                    
-                    # 💻 模式一：全系統大升級與垃圾回收 (升級後互動式詢問 autoremove)
-                    if choice == "system_update":
-                        cmd = []
-                        clean_cmds = []
-                        
-                        # 1. 基礎升級指令 (將原本硬 coding 綁死的 autoremove 抽離為選用)
-                        if self.sys_status.get("apt"):
-                            cmd.append("sudo apt update && sudo apt upgrade -y")
-                            clean_cmds.append("sudo apt autoremove -y && sudo apt autoclean")
-                        if self.sys_status.get("snap"):
-                            cmd.append("sudo snap refresh")
-                        if self.sys_status.get("flatpak"):
-                            cmd.append("flatpak update -y")
-                            clean_cmds.append("flatpak uninstall --unused -y")
-                        if self.sys_status.get("pacman"):
-                            cmd.append("sudo pacman -Syu --noconfirm")
-                            clean_cmds.append("(pacman -Qdtq | sudo pacman -Rns - || true)")
-                        if self.sys_status.get("dnf"):
-                            cmd.append("sudo dnf upgrade -y")
-                            clean_cmds.append("sudo dnf autoremove -y")
-                        if self.sys_status.get("zypper"):
-                            cmd.append("sudo zypper update -y")
+                # Flatpak
+                if self.sys_status.get("flatpak"):
+                    cmd.append("flatpak update -y")
+                    clean_cmds.append("flatpak uninstall --unused -y")
 
-                        if cmd:
-                            all_commands = cmd + clean_cmds
-                            final_cmd = " && ".join(all_commands)
-                        else:
-                            final_cmd = "echo '找不到支援的更新指令'"
+                # Arch / Pacman
+                if self.sys_status.get("pacman"):
+                    cmd.append("sudo pacman -Syu --noconfirm")
+                    clean_cmds.append(
+                    "(pacman -Qdtq | sudo pacman -Rns - || true)"
+                )
 
-                        # ✨ 透過共用引擎發射 (結束後自動觸發 TUI 背景重整與關閉提示)
-                        execute_update_cmd(final_cmd)
+                # Fedora
+                if self.sys_status.get("dnf"):
+                    cmd.append("sudo dnf upgrade -y")
+                    clean_cmds.append("sudo dnf autoremove -y")
 
-                    # 📦 模式二：選擇個別套件更新 (就是這裡剛剛被不小心吃掉了！)
-                    elif choice == "package_update":
-                        table = self.query_one("#installed-packages-table")
-                        package_data = []
-                        import re
-                        for row_key in table.rows:
-                            row = table.get_row(row_key)
-                            mgr = re.sub(r'\[.*?\]', '', str(row[0])).strip()
-                            name = re.sub(r'\[.*?\]', '', str(row[1])).strip()
-                            package_data.append({"mgr": mgr, "name": name})
-                        
-                        def handle_package_update(selected_pkgs: dict | None) -> None:
-                            if not selected_pkgs: return
-                            
-                            cmd = []
-                            for mgr, pkgs in selected_pkgs.items():
-                                pkgs_str = " ".join(pkgs)
-                                if mgr == "apt": cmd.append(f"sudo apt --only-upgrade install -y {pkgs_str}")
-                                elif mgr == "snap": cmd.append(f"sudo snap refresh {pkgs_str}")
-                                elif mgr == "flatpak": cmd.append(f"flatpak update -y {pkgs_str}")
-                                elif mgr == "pacman": cmd.append(f"sudo pacman -S --needed --noconfirm {pkgs_str}")
-                                elif mgr == "yay": cmd.append(f"yay -S --needed --noconfirm {pkgs_str}")
-                            
-                            final_cmd = " && ".join(cmd) if cmd else "echo '無更新指令'"
-                            execute_update_cmd(final_cmd)
+                # openSUSE
+                if self.sys_status.get("zypper"):
+                    cmd.append("sudo zypper update -y")
 
-                        self.push_screen(PackageUpdateModal(package_data), handle_package_update)
+                if cmd:
+                    all_commands = cmd + clean_cmds
+                    final_cmd = " && ".join(all_commands)
+                else:
+                    self.notify(
+                    "❌ 找不到支援的套件管理員。",
+                    severity="error"
+                )
+                    return
 
-                self.push_screen(UpdateChoiceModal(), handle_update_choice)
+                self.execute_and_refresh(
+                final_cmd,
+                "🔄 系統升級任務完成，清單已同步！"
+        )
             
             elif action == "export_list":
                 from morefunction import ExportModal
@@ -994,16 +968,19 @@ class LinuxPackageManagerApp(App):
                             else:
                                 import shutil, subprocess
                                 signal_file = "/tmp/lpm_refresh.tmp"
+
                                 if os.path.exists(signal_file):
-                                    try: os.remove(signal_file)
-                                    except Exception: pass
-                                
-                                    if not validate_command(final_cmd):
-                                        self.notify(
-                                            "❌ 安全機制已阻止不允許的匯入指令。",
-                                            severity="error"
-                                        )
-                                        return
+                                    try:
+                                        os.remove(signal_file)
+                                    except Exception:
+                                        pass
+
+                                if not validate_command(final_cmd):
+                                    self.notify(
+                                        "❌ 安全機制已阻止不允許的匯入指令。",
+                                        severity="error"
+                                )
+                                return
 
                                 bash_cmd = f"{final_cmd}; touch {signal_file}; read -p '執行完畢，按 [Enter] 關閉視窗...'"
                                 
@@ -1083,8 +1060,19 @@ class LinuxPackageManagerApp(App):
             self.push_screen(CommandTerminalScreen(cmd), after_install)
             
         else:
-            # 🖥️ 桌面 GUI 模式：呼叫外部系統終端機
-            import shutil, subprocess
+    # 🖥️ 桌面 GUI 模式：呼叫外部系統終端機
+
+            if not validate_command(cmd):
+                self.notify(
+                    "❌ 安全機制已阻止不允許的安裝指令。",
+                    severity="error"
+                )
+                return
+
+            bash_cmd = (
+                f"{cmd}; "
+                "read -p '安裝完畢！請按 [Enter] 關閉視窗，並重新啟動 LPM 即可生效...'"
+            )
 
             try:
                 self.launch_external_terminal(bash_cmd)
@@ -1092,24 +1080,7 @@ class LinuxPackageManagerApp(App):
                 self.notify(
                     f"❌ 啟動安裝程序失敗: {str(e)}",
                     severity="error"
-                    )
-
-                if not validate_command(final_cmd):
-                    self.notify(
-                        "❌ 安全機制已阻止不允許的匯入指令。",
-                            severity="error"
-                    )
-                    return
-            
-            bash_cmd = f"{cmd}; read -p '安裝完畢！請按 [Enter] 關閉視窗，並重新啟動 LPM 即可生效...'"
-            
-            try:
-                self.launch_external_terminal(bash_cmd)
-            except Exception as e:
-                self.notify(
-                f"❌ 啟動安裝程序失敗: {str(e)}",
-                severity="error"
-            )
+                )
 
     def execute_and_refresh(self, cmd: str, success_msg: str = "📦 系統套件清單已即時同步！") -> None:
         """🚀 終極大一統引擎：負責執行指令、判斷 SSH 模式，並在結束後精準自動刷新套件清單"""
@@ -1141,12 +1112,6 @@ class LinuxPackageManagerApp(App):
             if os.path.exists(signal_file):
                 try: os.remove(signal_file)
                 except Exception: pass
-
-            terminal_cmd = None
-            for term in ["konsole", "gnome-terminal", "xfce4-terminal", "kitty", "alacritty", "xterm"]:
-                if shutil.which(term) is not None:
-                    terminal_cmd = term
-                    break
             
             # 加上 touch 訊號檔的指令
             bash_cmd = f"{cmd}; touch {signal_file}; read -p '執行完畢，按 [Enter] 關閉視窗...'"
