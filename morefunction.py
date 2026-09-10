@@ -510,13 +510,6 @@ class UpdateChoiceModal(ModalScreen):
     #update-choice-container { width: 45; height: auto; background: #1f2335; border: thick #9ece6a; padding: 1; }
     #update-choice-title { text-align: center; text-style: bold; color: #9ece6a; margin-bottom: 1; }
     """
-    def compose(self) -> ComposeResult:
-        with Vertical(id="update-choice-container"):
-            yield Label("🔄 系統與套件更新中心", id="update-choice-title")
-            yield OptionList(
-                Option("💻 全系統升級與垃圾回收 (推薦)", id="system_update"),
-                Option("📦 選擇個別套件更新", id="package_update")
-            )
             
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(event.option.id)
@@ -539,15 +532,6 @@ class PackageUpdateModal(ModalScreen):
         self.package_data = package_data
         self.all_leaf_nodes = []
         self.is_all_selected = False
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="pkg-update-container"):
-            yield Label("📦 [bold #7aa2f7]請勾選要更新的套件[/] (可全選)：", classes="section-title")
-            yield Tree("系統已安裝套件", id="pkg-update-tree")
-            with Horizontal(classes="pkg-btn-box"):
-                yield Button("全選 / 全不選", id="btn-select-all", variant="primary")
-                yield Button("取消", id="btn-update-cancel", variant="error")
-                yield Button("確認更新 🚀", id="btn-update-confirm", variant="success")
 
     def on_mount(self):
         tree = self.query_one("#pkg-update-tree", Tree)
@@ -600,12 +584,17 @@ class PackageUpdateModal(ModalScreen):
 # ================= 2. ESC 按鍵彈出的控制選單 =================
 class EscMenuScreen(ModalScreen):
     """按 ESC 鍵彈出的系統選單"""
-    
+
+    BINDINGS = [
+        ("escape", "dismiss_menu", "關閉選單"),
+    ]
+
     CSS = """
     EscMenuScreen {
         align: center middle;
         background: rgba(0, 0, 0, 0.7);
     }
+
     #esc-container {
         width: 45;
         height: auto;
@@ -613,6 +602,7 @@ class EscMenuScreen(ModalScreen):
         border: thick #ff5555;
         padding: 1;
     }
+
     #esc-title {
         text-align: center;
         text-style: bold;
@@ -623,24 +613,33 @@ class EscMenuScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="esc-container"):
-            yield Label("系統控制選單(歐批踢唉歐嗯)", id="esc-title")
-            yield OptionList(
+            yield Label(
+                "系統控制選單(歐批踢唉歐嗯)",
+                id="esc-title"
+            )
 
-                Option("⚙️ 系統設定", id="open_settings"), 
+            yield OptionList(
+                Option("⚙️ 系統設定", id="open_settings"),
                 Option("📤 匯出套件", id="export_list"),
                 Option("📥 匯入套件", id="import_list"),
                 Option("🔄 更新", id="update_system"),
                 Option("🚪 退出程式", id="quit")
-            
             )
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    def action_dismiss_menu(self) -> None:
+        self.dismiss(None)
+
+    def on_option_list_option_selected(
+        self,
+        event: OptionList.OptionSelected
+    ) -> None:
         self.dismiss(event.option.id)
 
 class PackageTable(DataTable):
-    """專屬綁定 Enter 鍵的表格，徹底解決與其他輸入框的按鍵衝突"""
+    """LPM 專用套件表格"""
+
     BINDINGS = [
-        # ✨ 將無敵星星縮小範圍，只綁定在這個表格上！
-        # Binding("enter", "app.enter_action", "確認刪除", priority=True) # REMOVED
+    ("escape", "dismiss_menu", "關閉選單"),
+
     ]
-    pass
+    pass 
