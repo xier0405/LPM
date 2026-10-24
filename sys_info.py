@@ -51,10 +51,10 @@ class SysInfo:
                 "system_upgrade": "paru -Syu --noconfirm && paru -c --noconfirm"
                 },
             "snap": {
-                "install": "sudo snap install {pkgs} || (echo '\n⚠️ LPM 偵測到套件需要 Classic 沙盒權限，正在自動為您重試...' && sudo snap install {pkgs} --classic)",
+                # ✨ 移除了 echo 裡面的 \n，避免觸發 command_security 的防護網
+                "install": "sudo snap install {pkgs} || (echo '⚠️ LPM 偵測到套件需要 Classic 沙盒權限，正在自動為您重試...' && sudo snap install {pkgs} --classic)",
                 
-                # ✨ 升級解除安裝：如果一般移除失敗，就用 --purge 強制暴力清道夫！
-                "uninstall": "sudo snap remove {pkgs} || (echo '\n⚠️ 偵測到殘留的套件設定檔，正在啟動強制清除...' && sudo snap remove {pkgs} --purge)",
+                "uninstall": "sudo snap remove {pkgs} || (echo '⚠️ 偵測到殘留的套件設定檔，正在啟動強制清除...' && sudo snap remove {pkgs} --purge)",
                 
                 "upgrade_single": "sudo snap refresh {pkgs}",
                 "system_upgrade": "sudo snap refresh"
