@@ -123,9 +123,8 @@ class SettingsScreen(BackableModalScreen):
             pref_mgr = self.preferred_mgr  # 欄位已移除，維持原本傳入的偏好值不變
             
             # 移除檢查 ai_choice 是否為空或 Select.BLANK 的邏輯
-            # 並直接 dismiss，即使 ai_choice 是空的
             self.notify(f"✅ 設定已更新！SSH 模式: {'開啟' if ssh_mode else '關閉'}")
-            self.go_back()({
+            self.dismiss({
                 "ai_engine": ai_choice if ai_choice and ai_choice != Select.BLANK else None, # 將空值或 BLANK 轉換為 None
                 "api_token": api_token, 
                 "ssh_mode": ssh_mode, 
