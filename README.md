@@ -65,3 +65,52 @@ requirements.txt (相依套件技術棧總覽)
 會慢慢更新東西上去><
 
 https://hackmd.io/@Xier/rJxvr3ImGl
+
+
+## 設定保存與 AI Token 保護
+
+在「Esc → 系統設定」按下儲存後，SSH 模式與 AI 選擇會保留至下次啟動。
+欄位大小、套件清單排序與優先套件庫也會在調整時自動保存。
+目前 AI 查詢後端只有 Gemini，因此選單只提供 Gemini。
+
+一般設定儲存在 `$XDG_CONFIG_HOME/lpm/config.json`；若未設定絕對路徑的
+`XDG_CONFIG_HOME`，則使用 `~/.config/lpm/config.json`。設定目錄權限為 `0700`，
+檔案為 `0600`，使用同目錄暫存檔與原子替換寫入。設定檔只保存允許的非機密欄位，
+不會保存 API Token。損壞、過大或不支援版本的檔案會保留原樣，啟動時使用預設值並提示；
+請修復或移走該檔案，再重新啟動。符號連結、硬連結與非本人擁有的設定檔會被拒絕。
+
+### Token 的操作方式
+
+- 輸入框以密碼樣式顯示，重新開啟設定時不會回填已存在的 Token。
+- 留空代表保留本次使用的 Token；輸入新值代表更換。
+- 勾選「使用系統金鑰圈記住新輸入的 Token」，會將新值交給 Linux
+  [Secret Service 金鑰圈](https://keyring.readthedocs.io/en/stable/#using-keyring-on-headless-linux-systems)
+  保存，供之後啟動時讀取。LPM 明確使用 `keyring.backends.SecretService.Keyring`，
+  不會自動選用明文檔案後端。
+- 金鑰圈不存在、鎖定或寫入失敗時，會提示 Token 僅本次有效；一般設定仍會保存。
+  寫入失敗時，金鑰圈可能仍保留先前的 Token，請解鎖後重新輸入並儲存。
+- 取消「記住」會嘗試移除金鑰圈內的 Token，並保留本次執行中的值。
+  勾選「刪除已儲存的 Token 並停用本次 AI」則同時清空本次使用的值。
+  若刪除失敗會明確提示，且設定會禁止下次自動載入；請解鎖後再次刪除。
+- 啟動時，非空白的 `GEMINI_API_KEY` 環境變數優先於金鑰圈。
+  環境變數中的 Token 不會自動保存。刪除金鑰圈內的 Token 不會移除外部環境變數，
+  若要持續停用 AI，請同時移除該環境變數。
+- AI 與金鑰圈錯誤不顯示原始例外內容，避免回應中的 URL 或憑證被帶入介面。
+  Token 輸入框也不會發出帶完整內容的 `Input.Changed` / `Input.Submitted` 訊息。
+
+更新後請在虛擬環境執行 `python -m pip install -r requirements.txt`。
+若使用 SSH / 無桌面的主機，仍可只在本次輸入 Token；要跨次保存，需先準備可用的
+Secret Service、D-Bus 工作階段與已解鎖的金鑰圈。相關設定請參考上述官方文件。
+
+這些保護針對明文落盤與意外顯示；執行時 Token 仍存在程式記憶體中，
+無法抵擋已控制同一帳號或 root 的程式。不要將真實 Token 放進程式碼、測試資料或除錯紀錄。
+
+### 驗證
+
+測試不使用真實 Token、不呼叫 AI，也不修改系統套件或真實金鑰圈。
+在安裝相依套件後執行：
+
+```bash
+python -m pip install pytest
+python -m pytest -q
+```
