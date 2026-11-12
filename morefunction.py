@@ -68,7 +68,7 @@ class ThemeMenuScreen(ModalScreen):
 
 # ================= ⚙️ 系統設定中心跳窗 =================
 class SettingsScreen(BackableModalScreen):
-    """系統設定視窗；已有的 Token 不會填回輸入框"""
+    """系統設定視窗；只有主動按「顯示」才會回填已載入的 Token。"""
     
     CSS = """
     SettingsScreen { align: center middle; background: rgba(0, 0, 0, 0.7); }
@@ -77,6 +77,7 @@ class SettingsScreen(BackableModalScreen):
     .setting-row { height: auto; margin-bottom: 1; align: left middle; }
     .setting-label { width: 20; content-align: left middle; }
     .setting-control { width: 1fr; }
+    #setting-token-visibility { width: 10; min-width: 10; margin-left: 1; }
     .settings-btn-box { height: auto; align: right middle; margin-top: 1; }
     #setting-cancel { margin-right: 2; }
     """
@@ -89,10 +90,11 @@ class SettingsScreen(BackableModalScreen):
     # ✨ 新增 sys_status 參數來接收系統狀態
     def __init__(self, ssh_mode: bool = False, preferred_mgr: str = "apt", sys_status: dict = None,
                  current_ai_engine: str = "gemini", token_present: bool = False,
-                 remember_token: bool = True) -> None:
+                 remember_token: bool = True, current_token: str = "") -> None:
         super().__init__()
         self.current_ai_engine = current_ai_engine
-        self.token_present = token_present
+        self.token_present = token_present or bool(current_token)
+        self.current_token = current_token
         self.remember_token = remember_token
         self.ssh_mode = ssh_mode
         self.preferred_mgr = preferred_mgr
@@ -114,6 +116,7 @@ class SettingsScreen(BackableModalScreen):
                 yield Label("API Token：", classes="setting-label")
                 placeholder = "已有 Token；留空保留，輸入新值更換" if self.token_present else "輸入 Gemini API Token；留空不變更"
                 yield TokenInput(placeholder=placeholder, password=True, id="setting-api-token", classes="setting-control")
+                yield Button("顯示", id="setting-token-visibility")
 
             yield Checkbox("使用系統金鑰圈記住新輸入的 Token", value=self.remember_token, id="setting-remember-token")
             yield Checkbox("刪除已儲存的 Token 並停用本次 AI", id="setting-clear-token")
@@ -131,13 +134,31 @@ class SettingsScreen(BackableModalScreen):
                 yield Button("儲存設定 💾", id="setting-save", variant="success")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "setting-token-visibility":
+            event.stop()
+            field = self.query_one("#setting-api-token", TokenInput)
+            if field.password:
+                # Only reveal the current token after an explicit user action.
+                # Never overwrite a replacement token the user has typed.
+                if not field.value and self.current_token:
+                    field.value = self.current_token
+                field.password = False
+                event.button.label = "隱藏"
+            else:
+                field.password = True
+                event.button.label = "顯示"
+            return
+
         if event.button.id == "setting-cancel":
             self.go_back()
             return
 
         if event.button.id == "setting-save":
             ai_choice = self.query_one("#setting-ai-model").value
-            api_token = self.query_one("#setting-api-token").value
+            api_token = self.query_one("#setting-api-token", TokenInput).value
+            # A reveal alone is not a new token; do not persist it by accident.
+            if api_token == self.current_token:
+                api_token = ""
             ssh_mode = self.query_one("#setting-ssh-mode").value
             pref_mgr = self.preferred_mgr  # 欄位已移除，維持原本傳入的偏好值不變
             
@@ -145,6 +166,7 @@ class SettingsScreen(BackableModalScreen):
             clear_token = self.query_one("#setting-clear-token", Checkbox).value
             # Remove the new secret from the widget before dismissing the screen.
             self.query_one("#setting-api-token", Input).value = ""
+            self.current_token = ""
             self.dismiss({
                 "ai_engine": ai_choice if ai_choice and ai_choice != Select.BLANK else None, # 將空值或 BLANK 轉換為 None
                 "api_token": api_token, 
@@ -165,6 +187,7 @@ class SettingsScreen(BackableModalScreen):
 
     def go_back(self) -> None:
         self.query_one("#setting-api-token", Input).value = ""
+        self.current_token = ""
         super().go_back()
 
 # ================= 💻 內建終端機執行跳窗 (SSH 專用) =================

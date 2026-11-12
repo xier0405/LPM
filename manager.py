@@ -847,6 +847,7 @@ class LinuxPackageManagerApp(App):
                         sys_status=self.sys_status,
                         current_ai_engine=self.current_ai_engine,
                         token_present=bool(self.current_gemini_token),
+                        current_token=self.current_gemini_token,
                         remember_token=self.settings.remember_token,
                     ),
                     self.apply_settings,
