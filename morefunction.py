@@ -9,8 +9,17 @@ from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from command_security import validate_command
 from textual.widgets.option_list import Option
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.widgets import Label, OptionList, Input, Select, Button, Checkbox, TextArea, RichLog, DataTable
+
+
+class TokenInput(Input):
+    """Do not broadcast complete credentials in Textual value-change messages."""
+
+    def post_message(self, message) -> bool:
+        if isinstance(message, (Input.Changed, Input.Submitted)):
+            return False
+        return super().post_message(message)
 
 
 class BackableModalScreen(ModalScreen):
@@ -59,15 +68,16 @@ class ThemeMenuScreen(ModalScreen):
 
 # ================= ⚙️ 系統設定中心跳窗 =================
 class SettingsScreen(BackableModalScreen):
-    """彈出的系統設定視窗，支援多重 AI 選擇、API Token 輸入與 SSH 模式"""
+    """系統設定視窗；只有主動按「顯示」才會回填已載入的 Token。"""
     
     CSS = """
     SettingsScreen { align: center middle; background: rgba(0, 0, 0, 0.7); }
-    #settings-container { width: 75; height: auto; background: #1f2335; border: thick #7aa2f7; padding: 1 2; }
+    #settings-container { width: 75; max-width: 95%; height: auto; max-height: 95%; background: #1f2335; border: thick #7aa2f7; padding: 1 2; }
     #settings-title { text-align: center; text-style: bold; color: #7aa2f7; margin-bottom: 2; width: 100%; }
     .setting-row { height: auto; margin-bottom: 1; align: left middle; }
     .setting-label { width: 20; content-align: left middle; }
     .setting-control { width: 1fr; }
+    #setting-token-visibility { width: 10; min-width: 10; margin-left: 1; }
     .settings-btn-box { height: auto; align: right middle; margin-top: 1; }
     #setting-cancel { margin-right: 2; }
     """
@@ -78,27 +88,39 @@ class SettingsScreen(BackableModalScreen):
     ]
 
     # ✨ 新增 sys_status 參數來接收系統狀態
-    def __init__(self, current_token: str = "", ssh_mode: bool = False, preferred_mgr: str = "apt", sys_status: dict = None) -> None:
+    def __init__(self, ssh_mode: bool = False, preferred_mgr: str = "apt", sys_status: dict = None,
+                 current_ai_engine: str = "gemini", token_present: bool = False,
+                 remember_token: bool = True, current_token: str = "") -> None:
         super().__init__()
+        self.current_ai_engine = current_ai_engine
+        self.token_present = token_present or bool(current_token)
         self.current_token = current_token
+        self.remember_token = remember_token
         self.ssh_mode = ssh_mode
         self.preferred_mgr = preferred_mgr
         self.sys_status = sys_status or {} # 預設給個空字典防呆
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="settings-container"):
+        with VerticalScroll(id="settings-container"):
             yield Label("⚙️ 系統設定中心", id="settings-title")
 
             with Horizontal(classes="setting-row"):
                 yield Label("選擇要使用的 AI：", classes="setting-label")
                 yield Select(
-                    options=[("Gemini", "gemini"), ("DeepSeek", "deepseek"), ("ChatGPT", "chatgpt"), ("Grok", "grok")],
+                    options=[("Gemini", "gemini")],
+                    value=self.current_ai_engine, allow_blank=False,
                     prompt="請選擇 AI 引擎", id="setting-ai-model", classes="setting-control"
                 )
             
             with Horizontal(classes="setting-row"):
                 yield Label("API Token：", classes="setting-label")
-                yield Input(value=self.current_token, placeholder="請輸入對應的 API 密鑰...", password=True, id="setting-api-token", classes="setting-control")
+                placeholder = "已有 Token；留空保留，輸入新值更換" if self.token_present else "輸入 Gemini API Token；留空不變更"
+                yield TokenInput(placeholder=placeholder, password=True, id="setting-api-token", classes="setting-control")
+                yield Button("顯示", id="setting-token-visibility")
+
+            yield Checkbox("使用系統金鑰圈記住新輸入的 Token", value=self.remember_token, id="setting-remember-token")
+            yield Checkbox("刪除已儲存的 Token 並停用本次 AI", id="setting-clear-token")
+            yield Label("金鑰圈須支援 Secret Service；無法使用時 Token 僅本次有效。")
 
             # ✨ 新增：SSH 模式開關
             with Horizontal(classes="setting-row"):
@@ -112,23 +134,46 @@ class SettingsScreen(BackableModalScreen):
                 yield Button("儲存設定 💾", id="setting-save", variant="success")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "setting-token-visibility":
+            event.stop()
+            field = self.query_one("#setting-api-token", TokenInput)
+            if field.password:
+                # Only reveal the current token after an explicit user action.
+                # Never overwrite a replacement token the user has typed.
+                if not field.value and self.current_token:
+                    field.value = self.current_token
+                field.password = False
+                event.button.label = "隱藏"
+            else:
+                field.password = True
+                event.button.label = "顯示"
+            return
+
         if event.button.id == "setting-cancel":
             self.go_back()
             return
 
         if event.button.id == "setting-save":
             ai_choice = self.query_one("#setting-ai-model").value
-            api_token = self.query_one("#setting-api-token").value
+            api_token = self.query_one("#setting-api-token", TokenInput).value
+            # A reveal alone is not a new token; do not persist it by accident.
+            if api_token == self.current_token:
+                api_token = ""
             ssh_mode = self.query_one("#setting-ssh-mode").value
             pref_mgr = self.preferred_mgr  # 欄位已移除，維持原本傳入的偏好值不變
             
-            # 移除檢查 ai_choice 是否為空或 Select.BLANK 的邏輯
-            self.notify(f"✅ 設定已更新！SSH 模式: {'開啟' if ssh_mode else '關閉'}")
+            remember_token = self.query_one("#setting-remember-token", Checkbox).value
+            clear_token = self.query_one("#setting-clear-token", Checkbox).value
+            # Remove the new secret from the widget before dismissing the screen.
+            self.query_one("#setting-api-token", Input).value = ""
+            self.current_token = ""
             self.dismiss({
                 "ai_engine": ai_choice if ai_choice and ai_choice != Select.BLANK else None, # 將空值或 BLANK 轉換為 None
                 "api_token": api_token, 
                 "ssh_mode": ssh_mode, 
-                "preferred_mgr": pref_mgr
+                "preferred_mgr": pref_mgr,
+                "remember_token": remember_token,
+                "clear_token": clear_token,
             })
 
         if event.button.id == "btn_copy_sys_info":
@@ -139,6 +184,11 @@ class SettingsScreen(BackableModalScreen):
 
     def action_cancel_settings(self) -> None:
         self.go_back()
+
+    def go_back(self) -> None:
+        self.query_one("#setting-api-token", Input).value = ""
+        self.current_token = ""
+        super().go_back()
 
 # ================= 💻 內建終端機執行跳窗 (SSH 專用) =================
 class CommandTerminalScreen(ModalScreen):

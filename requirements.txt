@@ -32,3 +32,4 @@ typing_extensions==4.15.0
 uc-micro-py==2.0.0
 urllib3==2.7.0
 websockets==16.0
+keyring>=25.6,<26

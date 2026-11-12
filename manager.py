@@ -57,9 +57,10 @@ def pre_flight_check():
     "search.py",
     "models.py",
     "command_security.py",
+    "config.py",
     ]
     # 這裡直接對接你的 GitHub Raw 網址
-    repo_base_url = "https://raw.githubusercontent.com/shamash970405/LPM/main/"
+    repo_base_url = "https://raw.githubusercontent.com/xier0405/LPM/main/"
     
     for file in core_files:
         if not os.path.exists(file):
@@ -83,6 +84,8 @@ import shutil
 import asyncio
 import subprocess
 from google import genai
+from dataclasses import replace
+from config import ConfigError, ConfigStore, Settings, SecretStoreError, TokenStore
 from sys_info import SysInfo
 from datetime import datetime
 from theme import ThemeManager
@@ -101,8 +104,7 @@ from textual.widgets import Header, Footer, Input, Markdown, Label, DataTable, O
 
 # ================= 1. Gemini AI 模組 =================
 class GeminiExplainer:
-    def __init__(self):
-        api_key = os.environ.get("GEMINI_API_KEY")
+    def __init__(self, api_key=""):
         self.client = genai.Client(api_key=api_key) if api_key else None
         # 啟動獨立的系統資訊引擎
         self.sys_info = SysInfo()
@@ -111,6 +113,7 @@ class GeminiExplainer:
         self.sys_status = self.sys_info.status
 
     def refresh_client(self, new_token: str) -> None:
+        self.client = None
         if new_token:
             self.client = genai.Client(api_key=new_token)
         else:
@@ -118,7 +121,7 @@ class GeminiExplainer:
 
     async def ask_gemini(self, package_name: str) -> str:
         if not self.client:
-            return "⚠️ 未偵測到 `GEMINI_API_KEY` 環境變數。"
+            return "⚠️ 請在系統設定輸入 Gemini API Token，或設定 GEMINI_API_KEY 環境變數。"
         prompt = f"請用繁體中文（台灣習慣用語）白話文解釋 Linux 套件 '{package_name}' 的用途，並列出 2 個核心特點。總字數限制在 80 字內。"
         try:
             loop = asyncio.get_event_loop()
@@ -127,8 +130,9 @@ class GeminiExplainer:
                 lambda: self.client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
             )
             return response.text
-        except Exception as e:
-            return f"❌ AI 查詢失敗: {str(e)}"
+        except Exception:
+            # SDK exception text can contain a request URL, headers or credentials.
+            return "❌ AI 查詢失敗，請檢查網路、API Token 與服務配額。"
 
 
 # ================= 3. 主介面模組 =================
@@ -160,7 +164,7 @@ class LinuxPackageManagerApp(App):
     .section-title { color: #bb9af3; text-style: bold; margin-bottom: 1; }
     #pkg-input { margin-bottom: 1; }
     DataTable { height: 1fr; border: solid #292e42; }
-    # ✨ 在 CSS 最下方新增這行：強制盒子高度自適應，解決中間空大洞的問題！
+    /* 強制盒子高度自適應 */
     #os-info-box, #git-info-box { 
         height: auto; 
     }
@@ -186,8 +190,17 @@ class LinuxPackageManagerApp(App):
         # 🎨 初始化主題管理與 AI 模組
         from theme import ThemeManager 
         self.theme_mgr = ThemeManager("tokyonight")
+        self.config_store = ConfigStore()
+        self.settings = self.config_store.load()
+        self.token_store = TokenStore()
+        self.startup_warnings = []
+        if self.config_store.warning:
+            self.startup_warnings.append(self.config_store.warning)
+        self.current_gemini_token = os.environ.get("GEMINI_API_KEY", "").strip()
+        self.current_ai_engine = self.settings.ai_engine
+        self.ssh_mode = self.settings.ssh_mode
+        self.preferred_mgr = self.settings.preferred_mgr
         self.ai = GeminiExplainer()
-        self.current_gemini_token = os.environ.get("GEMINI_API_KEY", "")
 
         # ✨ 啟動獨立的系統資訊引擎
         self.sys_info = SysInfo()
@@ -196,18 +209,21 @@ class LinuxPackageManagerApp(App):
         # 📦 核心資料庫暫存區與排序狀態
         self.raw_packages = []
         self.installed_packages = []
-        self.current_sort = "name"
-        self.sort_descending = False
-        self.current_priority_manager = "apt"  # 🎯 預設優先置頂 Ubuntu APT
-        
-        self.left_pane_width = 40
-        self.bottom_pane_height = 60
+        self.current_sort = self.settings.current_sort
+        self.sort_descending = self.settings.sort_descending
+        self.current_priority_manager = self.settings.current_priority_manager
+
+        self.left_pane_width = self.settings.left_pane_width
+        self.bottom_pane_height = self.settings.bottom_pane_height
         self.ai_task = None
 
    # 🎯 物理分流：完全不使用 RowSelected 事件，改用精準的鍵盤事件
     # 🎯 物理分流：升級版鍵盤事件核心（支援 S 鍵多選與 Enter 批次刪除）
     def on_key(self, event: __import__("textual").events.Key) -> None:
         
+        if isinstance(self.screen, ModalScreen):
+            return
+
         # 🔓 釋放 Esc 鍵！讓事件交給 BINDINGS 的 open_esc_menu 處理
         if event.key == 'escape':
             # 🛡️ 攔截：如果正在多選模式，就清空選取，絕對不開選單！
@@ -445,7 +461,22 @@ class LinuxPackageManagerApp(App):
             
         yield Footer()    
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        self.query_one("#left-pane").styles.width = f"{self.left_pane_width}%"
+        self.query_one("#bottom-pane").styles.height = f"{self.bottom_pane_height}%"
+        self.query_one("#top-box").styles.height = f"{100 - self.bottom_pane_height}%"
+        if self.settings.remember_token and not self.current_gemini_token:
+            try:
+                self.current_gemini_token = await asyncio.to_thread(self.token_store.load)
+            except SecretStoreError as error:
+                self.startup_warnings.append(str(error))
+        try:
+            self.ai.refresh_client(self.current_gemini_token)
+        except Exception:
+            self.startup_warnings.append("AI 初始化失敗；請在系統設定重新輸入 Token。")
+        for warning in self.startup_warnings:
+            self.notify(warning, severity="warning", timeout=10)
+        self.startup_warnings.clear()
         # 1. 初始化系統套件表格
         table = self.query_one("#installed-packages-table", DataTable)
         table.click_to_select = True
@@ -457,7 +488,6 @@ class LinuxPackageManagerApp(App):
         git_table.cursor_type = "row"
         
         # 3. 雙線並行啟動非同步掃描任務
-        import asyncio
         asyncio.create_task(self.load_installed_packages())
         asyncio.create_task(self.load_git_projects())  
 
@@ -497,6 +527,7 @@ class LinuxPackageManagerApp(App):
         elif target_id == "lbl-brew": self.current_priority_manager = "brew"
         else: return
         
+        self._save_preferences()
         self.notify(f"🎯 已將優先套件庫切換至：{self.current_priority_manager}")
             
         # 🚀 帶著搜尋框關鍵字，滿血洗牌刷新 5 欄位表格！
@@ -512,6 +543,7 @@ class LinuxPackageManagerApp(App):
             # 2. 判斷點擊了哪一欄位，更新排序目標
             targets = {0: "manager", 1: "name", 2: "group", 3: "version", 4: "size"}
             self.current_sort = targets.get(event.column_index, "name")
+            self._save_preferences()
             
             # 3. 呼叫我們剛剛寫好的完美排序引擎，重新繪製！
             current_keyword = self.query_one("#pkg-input").value if hasattr(self, 'query_one') else ""
@@ -707,11 +739,13 @@ class LinuxPackageManagerApp(App):
     def action_resize_left_pane(self, delta: int) -> None:
         self.left_pane_width = max(20, min(70, self.left_pane_width + delta))
         self.query_one("#left-pane").styles.width = f"{self.left_pane_width}%"
+        self._save_preferences()
 
     def action_resize_bottom_pane(self, delta: int) -> None:
         self.bottom_pane_height = max(20, min(80, self.bottom_pane_height + delta))
         self.query_one("#bottom-pane").styles.height = f"{self.bottom_pane_height}%"
         self.query_one("#top-box").styles.height = f"{100 - self.bottom_pane_height}%"
+        self._save_preferences()
 
     def action_space_action(self) -> None:
         """Space 的專屬空殼，真實邏輯在 on_key"""
@@ -739,57 +773,84 @@ class LinuxPackageManagerApp(App):
         except Exception:
             self.query_one("#pkg-input", __import__("textual").widgets.Input).focus()
 
+    def _save_preferences(self, settings=None) -> bool:
+        candidate = replace(
+            settings or self.settings,
+            left_pane_width=self.left_pane_width,
+            bottom_pane_height=self.bottom_pane_height,
+            current_sort=self.current_sort,
+            sort_descending=self.sort_descending,
+            current_priority_manager=self.current_priority_manager,
+        )
+        try:
+            self.config_store.save(candidate)
+        except ConfigError as error:
+            self.notify(str(error), severity="error", timeout=10)
+            return False
+        self.settings = candidate
+        return True
+
+    async def apply_settings(self, data: dict | None) -> None:
+        if data is None:
+            return
+        clear_token = data.get("clear_token", False)
+        new_token = data.get("api_token", "").strip()
+        remember = data.get("remember_token", True) and not clear_token
+        candidate = Settings.from_dict({
+            **self.settings.__dict__,
+            "ai_engine": data.get("ai_engine", "gemini"),
+            "ssh_mode": data.get("ssh_mode", False),
+            "preferred_mgr": data.get("preferred_mgr", "apt"),
+            "remember_token": remember,
+        })
+        # Report file errors before changing credentials or runtime settings.
+        if not self._save_preferences(candidate):
+            return
+        self.current_ai_engine = candidate.ai_engine
+        self.ssh_mode = candidate.ssh_mode
+        self.preferred_mgr = candidate.preferred_mgr
+        token = "" if clear_token else new_token or self.current_gemini_token
+        secret_warning = None
+        try:
+            if clear_token or not remember:
+                await asyncio.to_thread(self.token_store.delete)
+            elif new_token:
+                # Never persist an environment-sourced token implicitly.
+                await asyncio.to_thread(self.token_store.save, new_token)
+        except SecretStoreError as error:
+            secret_warning = str(error)
+        self.current_gemini_token = token
+        try:
+            self.ai.refresh_client(token)
+        except Exception:
+            self.notify("一般設定已儲存；AI 初始化失敗，請重新輸入 Token。", severity="error")
+            return
+        if secret_warning:
+            self.notify("一般設定已儲存；" + secret_warning, severity="warning", timeout=12)
+        elif clear_token:
+            self.notify("設定已儲存，金鑰圈中的 Token 已刪除，本次 AI 已停用。")
+        elif new_token and remember:
+            self.notify("設定已儲存，Token 已存入系統金鑰圈。")
+        else:
+            self.notify("設定已儲存。" + ("Token 僅供本次執行使用。" if not remember else ""))
+
     def action_open_esc_menu(self) -> None:
         def handle_esc_callback(action: str | None) -> None:
             if not action:
                 return
 
             if action == "open_settings":
-                def apply_settings_callback(settings_data: dict | None) -> None:
-                    if settings_data is not None:
-                        selected_engine = settings_data.get("ai_engine", None)
-                        new_token = settings_data.get("api_token", "").strip()
-                        ssh_mode = settings_data.get("ssh_mode", False)
-                        pref_mgr = settings_data.get("preferred_mgr", "apt")
-                        
-                        self.current_ai_engine = selected_engine
-                        self.current_gemini_token = new_token
-                        self.ssh_mode = ssh_mode
-                        self.preferred_mgr = pref_mgr
-                        
-                        try:
-                            self.ai.refresh_client(new_token)
-                        except Exception as e:
-                            self.notify(f"❌ AI 初始化失敗: {str(e)}", severity="error")
-                            return
-
-                        # Explicitly check for None or Select.NULL before calling upper()
-                        # Use __import__ to safely access Select.NULL if Select is not directly imported
-                        from textual.widgets import Select # Ensure Select is imported if not already
-                        if selected_engine is None or selected_engine == Select.NULL:
-                            engine_display = "未選擇的 AI 引擎"
-                        else:
-                            engine_display = selected_engine.upper()
-
-                        if new_token:
-                            self.notify(f"⚙️ {engine_display} 已切換，金鑰儲存成功！")
-                        else:
-                            self.notify(f"⚠️ 已切換至 {engine_display}，但您尚未輸入 API 金鑰哦！", severity="warning")
-
-                # ... 上面原本的程式碼 ...
-                current_ssh_mode = getattr(self, "ssh_mode", False)
-                current_pref_mgr = getattr(self, "preferred_mgr", "apt")
-                from morefunction import SettingsScreen
-                
-                # ✨ 把 self.sys_status 當作第四個參數傳進去！
                 self.push_screen(
                     SettingsScreen(
-                        getattr(self, "current_gemini_token", ""), 
-                        current_ssh_mode, 
-                        current_pref_mgr, 
-                        self.sys_status
-                    ), 
-                    apply_settings_callback
+                        ssh_mode=self.ssh_mode,
+                        preferred_mgr=self.preferred_mgr,
+                        sys_status=self.sys_status,
+                        current_ai_engine=self.current_ai_engine,
+                        token_present=bool(self.current_gemini_token),
+                        current_token=self.current_gemini_token,
+                        remember_token=self.settings.remember_token,
+                    ),
+                    self.apply_settings,
                 )
 
             # 🔄 處理系統與套件更新

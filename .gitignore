@@ -15,3 +15,10 @@ LPM.AppDir/
 .env
 build_appimage.py
 .txt
+
+# Local settings, credentials and test caches
+config.json
+.config/
+*.key
+secrets.json
+.pytest_cache/

@@ -89,6 +89,7 @@ elif [ -d "venv" ]; then
 else
     echo -e "${YELLOW}💡 正在為您建立獨立的 .venv 虛擬環境並安裝 requirements.txt 套件...${NC}"
     VENV_DIR=".venv"
+    VENV_PYTHON="$REPO_DIR/$VENV_DIR/bin/python3"
     python3 -m venv .venv
     source .venv/bin/activate
     
