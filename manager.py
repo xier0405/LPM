@@ -1167,39 +1167,99 @@ class LinuxPackageManagerApp(App):
             self.push_screen(CommandTerminalScreen(cmd), after_term)
             
         else:
-            # 🖥️ 桌面模式：呼叫外部系統終端機 + 訊號檔精準監聽
-            import shutil, subprocess, os
-            signal_file = "/tmp/lpm_refresh.tmp"
-            if os.path.exists(signal_file):
-                try: os.remove(signal_file)
-                except Exception: pass
-            
-            # 加上 touch 訊號檔的指令
-            bash_cmd = f"{cmd}; touch {signal_file}; read -p '執行完畢，按 [Enter] 關閉視窗...'"
-            
+            # 🖥️ 桌面模式：記錄每次操作真正的 Exit Code
+            import tempfile
+            import shlex
+            import shutil
+
+            # 建立本次任務專用的暫存目錄
+            result_dir = tempfile.mkdtemp(prefix="lpm-job-")
+            result_file = os.path.join(result_dir, "result")
+            temp_file = os.path.join(result_dir, "result.tmp")
+
+            # Shell 路徑加上安全引號
+            result_path = shlex.quote(result_file)
+            temp_path = shlex.quote(temp_file)
+
+            # 執行指令，並記錄真正的返回碼
+            bash_cmd = (
+                "set -o pipefail\n"
+                f"( {cmd} )\n"
+                "lpm_exit_code=$?\n"
+                f"printf '%s\\n' \"$lpm_exit_code\" > {temp_path}\n"
+                f"mv -- {temp_path} {result_path}\n"
+                "read -r -p '執行完畢，按 [Enter] 關閉視窗...' _"
+            )
+
             try:
                 self.launch_external_terminal(bash_cmd)
-            except Exception as e:
+
+            except Exception:
+                shutil.rmtree(result_dir, ignore_errors=True)
                 self.notify(
-                    f"❌ 啟動安裝程序失敗: {str(e)}",
+                    "❌ 無法啟動外部終端機。",
                     severity="error"
                 )
-            
-            # 🚀 啟動背景監聽任務，一旦偵測到訊號檔產生，就立刻刷新！
+                return
+
             async def exact_refresh():
-                for _ in range(600): # 最多等 10 分鐘
-                    if os.path.exists(signal_file):
-                        try: os.remove(signal_file)
-                        except Exception: pass
-                        
-                        try:
-                            await self.load_installed_packages()
-                            self.notify(success_msg)
-                        except Exception: pass
-                        break
-                    await asyncio.sleep(1)
-                    
+                try:
+                    # 最多監聽 30 分鐘
+                    for _ in range(1800):
+
+                        if os.path.isfile(result_file):
+
+                            try:
+                                with open(
+                                    result_file,
+                                    "r",
+                                    encoding="ascii"
+                                ) as file:
+                                    exit_code = int(file.read().strip())
+
+                            except (OSError, ValueError):
+                                self.notify(
+                                    "❌ 無法讀取指令執行結果。",
+                                    severity="error"
+                                )
+                                return
+
+                            # 先判斷操作是否成功
+                            if exit_code == 0:
+                                self.notify(success_msg)
+
+                            else:
+                                self.notify(
+                                    f"❌ 指令執行失敗！Exit Code: {exit_code}",
+                                    severity="error"
+                                )
+
+                            # 無論成功或失敗，都重新掃描套件
+                            try:
+                                await self.load_installed_packages()
+
+                            except Exception:
+                                self.notify(
+                                    "⚠️ 套件清單重新掃描失敗。",
+                                    severity="warning"
+                                )
+
+                            return
+
+                        await asyncio.sleep(1)
+
+                    self.notify(
+                        "⚠️ 等待指令結果逾時，無法確認操作是否完成。",
+                        severity="warning"
+                    )
+
+                finally:
+                    # 刪除本次任務的暫存檔案
+                    shutil.rmtree(result_dir, ignore_errors=True)
+
             asyncio.create_task(exact_refresh())
+
+
     def generate_uninstall_cmd_from_names(self, target_pkg_names: list) -> str:
         installed_db = getattr(self, "raw_packages", [])
         grouped_tasks = {}
