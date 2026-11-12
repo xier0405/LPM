@@ -13,6 +13,19 @@ from textual.containers import Vertical, Horizontal, VerticalScroll
 from textual.widgets import Label, OptionList, Input, Select, Button, Checkbox, TextArea, RichLog, DataTable
 
 
+class CircleCheckbox(Checkbox):
+    """Independently toggled checkbox rendered as ○ off / ● on."""
+
+    # Textual calls self.BUTTON_INNER whenever it renders a toggle;
+    # omit the square-shaped side characters to show only a circle.
+    BUTTON_LEFT = ""
+    BUTTON_RIGHT = ""
+
+    @property
+    def BUTTON_INNER(self) -> str:
+        return "●" if self.value else "○"
+
+
 class TokenInput(Input):
     """Do not broadcast complete credentials in Textual value-change messages."""
 
@@ -78,6 +91,8 @@ class SettingsScreen(BackableModalScreen):
     .setting-label { width: 20; content-align: left middle; }
     .setting-control { width: 1fr; }
     #setting-token-visibility { width: 10; min-width: 10; margin-left: 1; }
+    CircleCheckbox > .toggle--button { color: #c0caf5; background: #1f2335; }
+    CircleCheckbox.-on > .toggle--button { color: #7aa2f7; background: #1f2335; }
     .settings-btn-box { height: auto; align: right middle; margin-top: 1; }
     #setting-cancel { margin-right: 2; }
     """
@@ -118,14 +133,14 @@ class SettingsScreen(BackableModalScreen):
                 yield TokenInput(placeholder=placeholder, password=True, id="setting-api-token", classes="setting-control")
                 yield Button("顯示", id="setting-token-visibility")
 
-            yield Checkbox("使用系統金鑰圈記住新輸入的 Token", value=self.remember_token, id="setting-remember-token")
-            yield Checkbox("刪除已儲存的 Token 並停用本次 AI", id="setting-clear-token")
+            yield CircleCheckbox("使用系統金鑰圈記住新輸入的 Token", value=self.remember_token, id="setting-remember-token")
+            yield CircleCheckbox("刪除已儲存的 Token 並停用本次 AI", id="setting-clear-token")
             yield Label("金鑰圈須支援 Secret Service；無法使用時 Token 僅本次有效。")
 
             # ✨ 新增：SSH 模式開關
             with Horizontal(classes="setting-row"):
                 yield Label("進階選項：", classes="setting-label")
-                yield Checkbox("開啟 SSH 內建終端機模式 (解決遠端彈窗問題)", value=self.ssh_mode, id="setting-ssh-mode", classes="setting-control")
+                yield CircleCheckbox("開啟 SSH 內建終端機模式 (解決遠端彈窗問題)", value=self.ssh_mode, id="setting-ssh-mode", classes="setting-control")
 
             yield Button("📋 預覽並複製系統資訊 (Debug Info)", id="btn_copy_sys_info", variant="primary")
 
