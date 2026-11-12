@@ -22,3 +22,13 @@ config.json
 *.key
 secrets.json
 .pytest_cache/
+
+# 本機備份檔
+*.bak
+
+# 執行紀錄
+*.log
+
+# 本機環境與私人金鑰
+.env.*
+*.pem
